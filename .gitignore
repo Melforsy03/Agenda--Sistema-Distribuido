@@ -1,0 +1,14 @@
+venv/
+.env/
+*.env
+*.db
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.coverage
+*.log
+.vscode/
+.idea/
+.streamlit/

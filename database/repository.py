@@ -2,10 +2,7 @@ import sqlite3
 import bcrypt
 from datetime import datetime
 from .schema import setup_database
-<<<<<<< HEAD
 import os
-=======
->>>>>>> 88f82c86d99f8b2c5701c317ae4bcf0497ca2b5f
 
 class Database:
     def __init__(self, db_name='agenda.db'):

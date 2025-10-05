@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  agenda:
+    image: agenda:local       # usa la imagen local que acabas de construir
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_PATH=/data/agenda.db
+      - STREAMLIT_SERVER_ENABLECORS=false
+      - STREAMLIT_SERVER_ENABLEXsSRFProtection=false
+    volumes:
+      - agenda_data:/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  agenda_data:
+    driver: local
+

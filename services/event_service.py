@@ -1,7 +1,7 @@
 from database.repository import Database
-from websocket_manager import websocket_manager
-from notification_service import NotificationService
-from hierarchy_service import HierarchyService
+from services.websocket_manager import websocket_manager
+from services.notification_service import NotificationService
+from services.hierarchy_service import HierarchyService
 
 class EventService:
     def __init__(self):

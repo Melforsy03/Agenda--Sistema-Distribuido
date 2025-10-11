@@ -1,5 +1,5 @@
 from database.repository import Database
-from websocket_manager import websocket_manager
+from services.websocket_manager import websocket_manager
 import logging
 
 class HierarchyService:

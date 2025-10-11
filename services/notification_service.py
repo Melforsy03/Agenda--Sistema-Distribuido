@@ -1,6 +1,6 @@
 from database.repository import Database
-from websocket_manager import websocket_manager
-from hierarchy_service import HierarchyService
+from services.websocket_manager import websocket_manager
+from services.hierarchy_service import HierarchyService
 import logging
 from datetime import datetime
 

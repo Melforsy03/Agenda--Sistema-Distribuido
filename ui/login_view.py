@@ -15,6 +15,10 @@ def show_login_page():
         password = st.text_input("Contraseña", type="password")
 
         if st.button("Iniciar sesión"):
+            # Eliminar espacios en blanco al inicio y final
+            username = username.strip()
+            password = password.strip()
+
             if auth.login(username, password):
                 st.session_state.logged_in = True
                 st.session_state.username = username
@@ -33,7 +37,13 @@ def show_login_page():
         password = st.text_input("Nueva contraseña", type="password")
 
         if st.button("Registrarse"):
-            if auth.register(username, password):
+            # Eliminar espacios en blanco al inicio y final
+            username = username.strip()
+            password = password.strip()
+
+            if not username or not password:
+                st.error("❌ Usuario y contraseña no pueden estar vacíos")
+            elif auth.register(username, password):
                 st.success("✅ Usuario creado, ahora inicia sesión")
                 st.session_state.show_register = False
                 st.rerun()

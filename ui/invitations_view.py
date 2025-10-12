@@ -1,5 +1,6 @@
 import streamlit as st
 from services.group_service import GroupService
+import asyncio
 
 def show_invitations_view(user_id):
     st.header("📧 Invitaciones pendientes")
@@ -16,11 +17,15 @@ def show_invitations_view(user_id):
         col1, col2 = st.columns(2)
         with col1:
             if st.button(f"Aceptar {group_name}", key=f"acc_{inv_id}"):
-                GroupService().respond_invitation(inv_id, "accepted", user_id)
+                async def accept_invitation():
+                    return await GroupService().respond_invitation(inv_id, "accepted", user_id)
+                asyncio.run(accept_invitation())
                 st.success("Te uniste al grupo")
                 st.rerun()
         with col2:
             if st.button(f"Rechazar {group_name}", key=f"rej_{inv_id}"):
-                GroupService().respond_invitation(inv_id, "declined", user_id)
+                async def reject_invitation():
+                    return await GroupService().respond_invitation(inv_id, "declined", user_id)
+                asyncio.run(reject_invitation())
                 st.warning("Invitación rechazada")
                 st.rerun()

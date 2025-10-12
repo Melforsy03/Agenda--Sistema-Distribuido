@@ -31,7 +31,20 @@ class Database:
     def check_password(self, username, password):
         user = self.get_user(username)
         if user:
-            return bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8'))
+            try:
+                stored_hash = user[2]
+                # Asegurarse de que el hash esté en bytes
+                if isinstance(stored_hash, str):
+                    stored_hash = stored_hash.encode('utf-8')
+
+                # Asegurarse de que la contraseña esté en bytes
+                if isinstance(password, str):
+                    password = password.encode('utf-8')
+
+                return bcrypt.checkpw(password, stored_hash)
+            except Exception as e:
+                print(f"Error al verificar contraseña: {e}")
+                return False
         return False
 
     def get_user_id(self, username):

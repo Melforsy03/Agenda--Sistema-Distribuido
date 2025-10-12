@@ -1,9 +1,9 @@
 import asyncio
-from websocket_server import start_websocket_server
-from auth_service import AuthService
-from group_service import GroupService
-from event_service import EventService
-from visualization_service import VisualizationService
+from services.websocket_server import start_websocket_server
+from services.auth_service import AuthService
+from services.group_service import GroupService
+from services.event_service import EventService
+#from services.visualization_service import VisualizationService
 import uvicorn
 from fastapi import FastAPI
 
@@ -13,7 +13,7 @@ app = FastAPI(title="Agenda Distribuida")
 auth_service = AuthService()
 group_service = GroupService()
 event_service = EventService()
-visualization_service = VisualizationService()
+#visualization_service = VisualizationService()
 
 @app.on_event("startup")
 async def startup_event():

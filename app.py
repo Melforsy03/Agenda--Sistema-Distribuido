@@ -9,6 +9,7 @@ from ui.group_view import show_groups_view
 from ui.invitations_view import show_invitations_view
 from ui.notifications_view import show_notifications_view
 from services.auth_service import AuthService
+from services.session_manager import SessionManager
 
 # Configuración de la página
 st.set_page_config(
@@ -29,9 +30,36 @@ def start_websocket_server():
     from services.websocket_server import start_websocket_server as ws_start
     asyncio.run(ws_start())
 
+def restore_session():
+    """Restaurar sesión desde query params o localStorage"""
+    session_manager = SessionManager()
+
+    # Intentar obtener token de los query params
+    if 'session_token' in st.query_params:
+        token = st.query_params['session_token']
+        session_data = session_manager.get_session(token)
+
+        if session_data:
+            st.session_state.logged_in = True
+            st.session_state.username = session_data['username']
+            st.session_state.user_id = session_data['user_id']
+            st.session_state.session_token = token
+            return True
+
+    return False
+
 def main():
+    # Limpiar sesiones antiguas periódicamente
+    session_manager = SessionManager()
+    session_manager.cleanup_old_sessions()
+
+    # Inicializar estado de sesión
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
+
+    # Intentar restaurar sesión si no está logueado
+    if not st.session_state.logged_in:
+        restore_session()
 
     if not st.session_state.logged_in:
         show_login_page()
@@ -55,8 +83,19 @@ def main():
         
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Cerrar sesión"):
+            # Eliminar sesión del servidor
+            if 'session_token' in st.session_state:
+                session_manager = SessionManager()
+                session_manager.delete_session(st.session_state.session_token)
+
+            # Limpiar query params
+            if 'session_token' in st.query_params:
+                del st.query_params['session_token']
+
+            # Limpiar session state
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
+
             st.rerun()
         
         # Mostrar página seleccionada

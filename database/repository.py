@@ -87,8 +87,9 @@ class Database:
             LEFT JOIN users u ON e.creator_id = u.id
             LEFT JOIN groups g ON e.group_id = g.id
             WHERE (ep.user_id = ? OR e.creator_id = ?)
+              AND (ep.is_accepted = 1 OR e.creator_id = ?)
             ORDER BY e.start_time
-        ''', (user_id, user_id))
+        ''', (user_id, user_id, user_id))
         return self.cursor.fetchall()
 
     def check_conflict(self, user_id, start_time, end_time):
@@ -99,7 +100,8 @@ class Database:
             SELECT start_time, end_time FROM events e
             LEFT JOIN event_participants ep ON e.id = ep.event_id
             WHERE (ep.user_id = ? OR e.creator_id = ?)
-        ''', (user_id, user_id))
+              AND (ep.is_accepted = 1 OR e.creator_id = ?)
+        ''', (user_id, user_id, user_id))
 
         for s, e in self.cursor.fetchall():
             if start < datetime.strptime(e, '%Y-%m-%d %H:%M:%S') and end > datetime.strptime(s, '%Y-%m-%d %H:%M:%S'):
@@ -181,3 +183,56 @@ class Database:
                                 (user_id, group_id, False))
         self.conn.commit()
         return True
+
+    def update_group(self, group_id, name=None, description=None):
+        """Actualizar nombre y/o descripción de un grupo"""
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+
+        if not updates:
+            return True
+
+        params.append(group_id)
+        query = f"UPDATE groups SET {', '.join(updates)} WHERE id = ?"
+
+        try:
+            self.cursor.execute(query, params)
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def remove_user_from_group(self, user_id, group_id):
+        """Eliminar un usuario de un grupo"""
+        try:
+            self.cursor.execute('DELETE FROM user_groups WHERE user_id = ? AND group_id = ?',
+                              (user_id, group_id))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def is_group_leader(self, user_id, group_id):
+        """Verificar si un usuario es líder de un grupo"""
+        self.cursor.execute('''
+            SELECT is_leader FROM user_groups
+            WHERE user_id = ? AND group_id = ?
+        ''', (user_id, group_id))
+        result = self.cursor.fetchone()
+        return result and result[0]
+
+    def get_group_info(self, group_id):
+        """Obtener información completa de un grupo"""
+        self.cursor.execute('''
+            SELECT id, name, description, is_hierarchical, creator_id
+            FROM groups WHERE id = ?
+        ''', (group_id,))
+        return self.cursor.fetchone()

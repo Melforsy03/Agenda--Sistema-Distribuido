@@ -68,3 +68,44 @@ class GroupService:
                             "new_member_id": user_id
                         })
         return success
+
+    def update_group(self, group_id, user_id, name=None, description=None):
+        """Actualizar información del grupo (solo líderes)"""
+        # Verificar que el usuario es líder
+        if not self.db.is_group_leader(user_id, group_id):
+            return False, "Solo los líderes pueden editar el grupo"
+
+        success = self.db.update_group(group_id, name, description)
+        if success:
+            return True, "Grupo actualizado exitosamente"
+        else:
+            return False, "Error al actualizar el grupo (el nombre podría estar en uso)"
+
+    async def remove_member(self, group_id, leader_id, member_id):
+        """Eliminar un miembro del grupo (solo líderes)"""
+        # Verificar que el usuario es líder
+        if not self.db.is_group_leader(leader_id, group_id):
+            return False, "Solo los líderes pueden eliminar miembros"
+
+        # No permitir que el líder se elimine a sí mismo
+        if leader_id == member_id:
+            return False, "No puedes eliminarte a ti mismo del grupo"
+
+        success = self.db.remove_user_from_group(member_id, group_id)
+        if success:
+            # Notificar al usuario eliminado
+            await websocket_manager.send_to_user(member_id, {
+                "type": "removed_from_group",
+                "group_id": group_id
+            })
+            return True, "Miembro eliminado del grupo"
+        else:
+            return False, "Error al eliminar miembro"
+
+    def is_leader(self, user_id, group_id):
+        """Verificar si un usuario es líder de un grupo"""
+        return self.db.is_group_leader(user_id, group_id)
+
+    def get_group_info(self, group_id):
+        """Obtener información del grupo"""
+        return self.db.get_group_info(group_id)

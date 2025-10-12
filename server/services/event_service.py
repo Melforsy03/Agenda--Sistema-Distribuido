@@ -13,16 +13,29 @@ class EventService:
                          creator_id, group_id=None, is_group_event=False,
                          participants_ids=None, is_hierarchical=False):
         """Crea un evento validando conflictos de horario con soporte para jerarquías."""
+        
+        # Validar campos requeridos
+        if not title:
+            return None, "El título es requerido"
+        
+        if not start_time:
+            return None, "La fecha y hora de inicio son requeridas"
+            
+        if not end_time:
+            return None, "La fecha y hora de fin son requeridas"
+            
+        if not creator_id:
+            return None, "El creador del evento es requerido"
 
         # Validar que la fecha de inicio sea anterior a la fecha de fin
         from datetime import datetime
         try:
-            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+            end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
             if start_dt >= end_dt:
                 return None, "La fecha y hora de inicio debe ser anterior a la fecha y hora de finalización"
-        except ValueError:
-            return None, "Formato de fecha inválido"
+        except ValueError as e:
+            return None, f"Formato de fecha inválido: {str(e)}"
 
         # Lógica para eventos jerárquicos
         if is_hierarchical and group_id:
@@ -31,42 +44,78 @@ class EventService:
             )
 
         # Lógica original para eventos normales
-        if self.db.check_conflict(creator_id, start_time, end_time):
-            return None, "Conflicto en agenda del creador"
+        try:
+            if self.db.check_conflict(creator_id, start_time, end_time):
+                return None, "Conflicto en agenda del creador"
+        except Exception as e:
+            return None, f"Error al verificar conflictos del creador: {str(e)}"
 
         if participants_ids:
-            conflict_users = [p for p in participants_ids if self.db.check_conflict(p, start_time, end_time)]
-            if conflict_users:
-                return None, f"Conflicto con participantes: {conflict_users}"
+            try:
+                conflict_users = [p for p in participants_ids if self.db.check_conflict(p, start_time, end_time)]
+                if conflict_users:
+                    return None, f"Conflicto con participantes: {conflict_users}"
+            except Exception as e:
+                return None, f"Error al verificar conflictos de participantes: {str(e)}"
 
-        event_id = self.db.add_event(title, description, start_time, end_time,
-                                   creator_id, group_id, is_group_event)
+        try:
+            event_id = self.db.add_event(title, description, start_time, end_time,
+                                       creator_id, group_id, is_group_event)
+        except Exception as e:
+            return None, f"Error al crear el evento en la base de datos: {str(e)}"
 
         # Añadir participantes
         # Creador siempre aceptado automáticamente
-        self.db.add_participant_to_event(event_id, creator_id, is_accepted=True)
+        try:
+            self.db.add_participant_to_event(event_id, creator_id, is_accepted=True)
+        except Exception as e:
+            return None, f"Error al añadir al creador como participante: {str(e)}"
+
+        # Verificar si el creador es líder del grupo
+        is_leader = False
+        if group_id:
+            is_leader = self.db.is_group_leader(creator_id, group_id)
 
         # Para eventos de grupo NO jerárquicos, los participantes deben aceptar
         # Para eventos individuales, también requieren aceptación
-        if participants_ids:
-            for p in participants_ids:
-                if p != creator_id:
-                    # En grupos no jerárquicos, requieren aceptación
-                    self.db.add_participant_to_event(event_id, p, is_accepted=False)
+        # Si el creador es líder, añadir automáticamente a todos los miembros sin notificación
+        if participants_ids and not is_leader:
+            try:
+                for p in participants_ids:
+                    if p != creator_id:
+                        # En grupos no jerárquicos, requieren aceptación
+                        self.db.add_participant_to_event(event_id, p, is_accepted=False)
+            except Exception as e:
+                return None, f"Error al añadir participantes: {str(e)}"
+        elif group_id and is_group_event and is_leader:
+            # Si es líder, añadir automáticamente a todos los miembros del grupo
+            try:
+                members = self.db.get_group_members(group_id)
+                for member_id, username in members:
+                    if member_id != creator_id:
+                        self.db.add_participant_to_event(event_id, member_id, is_accepted=True)
+            except Exception as e:
+                return None, f"Error al añadir miembros del grupo automáticamente: {str(e)}"
 
         # Notificaciones en tiempo real
-        if group_id and is_group_event:
-            await self.notifications.notify_group_event(event_id, group_id, creator_id)
-        elif participants_ids:
-            for user_id in participants_ids:
-                if user_id != creator_id:
-                    await websocket_manager.send_to_user(user_id, {
-                        "type": "event_invitation",
-                        "event_id": event_id,
-                        "title": title,
-                        "start_time": start_time,
-                        "end_time": end_time
-                    })
+        try:
+            # Solo enviar notificaciones si NO es un líder creando un evento grupal
+            if not (group_id and is_group_event and is_leader):
+                if group_id and is_group_event:
+                    await self.notifications.notify_group_event(event_id, group_id, creator_id)
+                elif participants_ids:
+                    for user_id in participants_ids:
+                        if user_id != creator_id:
+                            await websocket_manager.send_to_user(user_id, {
+                                "type": "event_invitation",
+                                "event_id": event_id,
+                                "title": title,
+                                "start_time": start_time,
+                                "end_time": end_time
+                            })
+        except Exception as e:
+            # Log the error but don't fail the event creation
+            print(f"Error al enviar notificaciones: {str(e)}")
 
         return event_id, None
 

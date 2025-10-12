@@ -1,11 +1,6 @@
 import streamlit as st
-from services.auth_service import AuthService
-from services.session_manager import SessionManager
 
-def show_login_page():
-    auth = AuthService()
-    session_manager = SessionManager()
-
+def show_login_page(api_client):
     st.title("📅 Sistema de Agenda - Login")
 
     if "show_register" not in st.session_state:
@@ -21,11 +16,10 @@ def show_login_page():
             username = username.strip()
             password = password.strip()
 
-            if auth.login(username, password):
-                user_id = auth.get_user_id(username)
-
-                # Crear token de sesión
-                token = session_manager.create_session(username, user_id)
+            try:
+                result = api_client.login(username, password)
+                token = result["token"]
+                user_id = result["user_id"]
 
                 # Guardar en session state
                 st.session_state.logged_in = True
@@ -36,10 +30,13 @@ def show_login_page():
                 # Agregar token a query params para persistencia
                 st.query_params['session_token'] = token
 
+                # Mark WebSocket as not yet connected (will connect in main app)
+                st.session_state.websocket_connected = False
+
                 st.success("✅ Sesión iniciada")
                 st.rerun()
-            else:
-                st.error("❌ Usuario o contraseña incorrectos")
+            except Exception as e:
+                st.error(f"❌ Error al iniciar sesión: {str(e)}")
 
         if st.button("Crear cuenta nueva"):
             st.session_state.show_register = True
@@ -57,12 +54,14 @@ def show_login_page():
 
             if not username or not password:
                 st.error("❌ Usuario y contraseña no pueden estar vacíos")
-            elif auth.register(username, password):
-                st.success("✅ Usuario creado, ahora inicia sesión")
-                st.session_state.show_register = False
-                st.rerun()
             else:
-                st.error("❌ Ese usuario ya existe")
+                try:
+                    result = api_client.register(username, password)
+                    st.success("✅ Usuario creado, ahora inicia sesión")
+                    st.session_state.show_register = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al crear usuario: {str(e)}")
 
         if st.button("Ya tengo cuenta"):
             st.session_state.show_register = False

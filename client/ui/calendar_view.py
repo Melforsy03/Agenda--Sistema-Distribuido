@@ -1,49 +1,49 @@
 import streamlit as st
 from streamlit_calendar import calendar
-from services.event_service import EventService
 import asyncio
 from datetime import datetime
 
-def show_calendar_view(user_id):
+def show_calendar_view(user_id, api_client, token):
     st.header("📅 Mi calendario")
 
     # Tabs para vista de calendario y lista de eventos
     tab1, tab2 = st.tabs(["📅 Vista Calendario", "📋 Lista de Eventos"])
 
     with tab1:
-        show_calendar_tab(user_id)
+        show_calendar_tab(user_id, api_client, token)
 
     with tab2:
-        show_events_list_tab(user_id)
+        show_events_list_tab(user_id, api_client, token)
 
 
-def show_calendar_tab(user_id):
+def show_calendar_tab(user_id, api_client, token):
     """Vista de calendario tradicional"""
-    events = EventService().get_user_events(user_id)
-    calendar_events = []
-    for e in events:
-        calendar_events.append({
-            "title": e[0],
-            "start": e[2],
-            "end": e[3],
-        })
+    try:
+        events = api_client.get_user_events(token)
+        calendar_events = []
+        for e in events:
+            calendar_events.append({
+                "title": e[0],
+                "start": e[2],
+                "end": e[3],
+            })
 
-    calendar_options = {
-        "headerToolbar": {
-            "left": "today prev,next",
-            "center": "title",
-            "right": "dayGridMonth,timeGridWeek,timeGridDay",
-        },
-        "initialView": "dayGridMonth"
-    }
+        calendar_options = {
+            "headerToolbar": {
+                "left": "today prev,next",
+                "center": "title",
+                "right": "dayGridMonth,timeGridWeek,timeGridDay",
+            },
+            "initialView": "dayGridMonth"
+        }
 
-    calendar(events=calendar_events, options=calendar_options, key="calendar1")
+        calendar(events=calendar_events, options=calendar_options, key="calendar1")
+    except Exception as e:
+        st.error(f"Error al cargar eventos: {str(e)}")
 
 
-def show_events_list_tab(user_id):
+def show_events_list_tab(user_id, api_client, token):
     """Vista de lista de eventos con filtros y detalles"""
-    event_service = EventService()
-
     # Filtros
     st.subheader("🔍 Filtrar eventos")
     col1, col2 = st.columns(2)
@@ -68,35 +68,38 @@ def show_events_list_tab(user_id):
     }
 
     # Obtener eventos filtrados
-    events = event_service.get_user_events_detailed(user_id, filter_map[filter_type])
+    try:
+        events = api_client.get_user_events_detailed(token, filter_map[filter_type])
 
-    # Aplicar búsqueda por texto
-    if search_text:
-        events = [e for e in events if search_text.lower() in e['title'].lower()]
+        # Aplicar búsqueda por texto
+        if search_text:
+            events = [e for e in events if search_text.lower() in e['title'].lower()]
 
-    # Mostrar estadísticas
-    st.markdown("---")
-    col_stat1, col_stat2, col_stat3 = st.columns(3)
-    with col_stat1:
-        st.metric("Total eventos", len(events))
-    with col_stat2:
-        pending_count = len([e for e in events if e['is_accepted'] == 0 and not e['is_creator']])
-        st.metric("Pendientes", pending_count)
-    with col_stat3:
-        created_count = len([e for e in events if e['is_creator']])
-        st.metric("Creados por ti", created_count)
+        # Mostrar estadísticas
+        st.markdown("---")
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+        with col_stat1:
+            st.metric("Total eventos", len(events))
+        with col_stat2:
+            pending_count = len([e for e in events if e['is_accepted'] == 0 and not e['is_creator']])
+            st.metric("Pendientes", pending_count)
+        with col_stat3:
+            created_count = len([e for e in events if e['is_creator']])
+            st.metric("Creados por ti", created_count)
 
-    st.markdown("---")
+        st.markdown("---")
 
-    # Mostrar lista de eventos
-    if not events:
-        st.info("No hay eventos para mostrar con los filtros seleccionados")
-    else:
-        for event in events:
-            show_event_card(event, user_id, event_service)
+        # Mostrar lista de eventos
+        if not events:
+            st.info("No hay eventos para mostrar con los filtros seleccionados")
+        else:
+            for event in events:
+                show_event_card(event, user_id, api_client, token)
+    except Exception as e:
+        st.error(f"Error al cargar eventos: {str(e)}")
 
 
-def show_event_card(event, user_id, event_service):
+def show_event_card(event, user_id, api_client, token):
     """Mostrar tarjeta de evento con detalles y acciones"""
     # Determinar el estado del evento
     try:
@@ -162,15 +165,15 @@ def show_event_card(event, user_id, event_service):
                 col_yes, col_no = st.columns(2)
                 with col_yes:
                     if st.button("Sí, cancelar", key=f"yes_cancel_{event['id']}"):
-                        async def cancel():
-                            return await event_service.cancel_event(event['id'], user_id)
-                        success, message = asyncio.run(cancel())
-                        if success:
-                            st.success(f"✅ {message}")
+                        try:
+                            response = api_client.cancel_event(event['id'], token)
+                            st.success(response.get('message', 'Evento cancelado exitosamente'))
                             st.session_state[f'confirm_cancel_{event["id"]}'] = False
+                            # Refresh the page to show updated events
                             st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
+                        except Exception as e:
+                            st.error(f"Error al cancelar el evento: {str(e)}")
+                            st.session_state[f'confirm_cancel_{event["id"]}'] = False
                 with col_no:
                     if st.button("No, mantener", key=f"no_cancel_{event['id']}"):
                         st.session_state[f'confirm_cancel_{event["id"]}'] = False
@@ -188,15 +191,15 @@ def show_event_card(event, user_id, event_service):
                 col_yes, col_no = st.columns(2)
                 with col_yes:
                     if st.button("Sí, salir", key=f"yes_leave_{event['id']}"):
-                        async def leave():
-                            return await event_service.leave_event(event['id'], user_id)
-                        success, message = asyncio.run(leave())
-                        if success:
-                            st.success(f"✅ {message}")
+                        try:
+                            response = api_client.leave_event(event['id'], token)
+                            st.success(response.get('message', 'Has salido del evento'))
                             st.session_state[f'confirm_leave_{event["id"]}'] = False
+                            # Refresh the page to show updated events
                             st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
+                        except Exception as e:
+                            st.error(f"Error al salir del evento: {str(e)}")
+                            st.session_state[f'confirm_leave_{event["id"]}'] = False
                 with col_no:
                     if st.button("No, quedarme", key=f"no_leave_{event['id']}"):
                         st.session_state[f'confirm_leave_{event["id"]}'] = False
@@ -204,61 +207,63 @@ def show_event_card(event, user_id, event_service):
 
         # Mostrar detalles completos si se solicita
         if st.session_state.get(f'show_details_{event["id"]}', False):
-            show_event_details(event['id'], user_id, event_service)
+            show_event_details(event['id'], user_id, api_client, token)
 
         st.markdown("---")
 
 
-def show_event_details(event_id, user_id, event_service):
+def show_event_details(event_id, user_id, api_client, token):
     """Mostrar detalles completos del evento incluyendo participantes"""
-    details, error = event_service.get_event_details(event_id, user_id)
-
-    if error:
-        st.error(f"❌ {error}")
-        return
-
-    with st.expander("📊 Detalles completos del evento", expanded=True):
-        st.markdown(f"### {details['title']}")
-
-        # Información completa
+    try:
+        event_details = api_client.get_event_details(event_id, token)
+        
+        st.subheader(f"Detalles del evento: {event_details['title']}")
+        
+        # Información básica del evento
         col1, col2 = st.columns(2)
         with col1:
-            st.write(f"**📅 Inicio:** {details['start_time']}")
-            st.write(f"**⏰ Fin:** {details['end_time']}")
-            st.write(f"**👤 Creador:** {details['creator_name']}")
+            st.write(f"📅 **Inicio:** {event_details['start_time']}")
+            st.write(f"⏰ **Fin:** {event_details['end_time']}")
+            st.write(f"👤 **Creador:** {event_details['creator_name']}")
+            
         with col2:
-            if details['is_group_event']:
-                st.write(f"**👥 Grupo:** {details['group_name']}")
-                if details['is_hierarchical']:
-                    st.write("**👑 Evento jerárquico**")
-
-        if details['description']:
-            st.markdown("**📝 Descripción:**")
-            st.write(details['description'])
-
-        # Lista de participantes
+            if event_details['is_group_event'] and event_details['group_name']:
+                st.write(f"👥 **Grupo:** {event_details['group_name']}")
+            if event_details['description']:
+                st.write(f"📝 **Descripción:** {event_details['description']}")
+        
+        # Mostrar participantes
         st.markdown("---")
-        st.markdown("### 👥 Participantes")
-
-        if details['participants']:
-            accepted = [p for p in details['participants'] if p['is_accepted']]
-            pending = [p for p in details['participants'] if not p['is_accepted']]
-
-            col_accepted, col_pending = st.columns(2)
-
-            with col_accepted:
-                st.markdown(f"**✅ Confirmados ({len(accepted)})**")
-                for p in accepted:
-                    st.write(f"• {p['username']}")
-
-            with col_pending:
-                st.markdown(f"**⏳ Pendientes ({len(pending)})**")
-                for p in pending:
-                    st.write(f"• {p['username']}")
+        st.subheader("👥 Participantes")
+        
+        if event_details['participants']:
+            # Separar participantes aceptados y pendientes
+            accepted_participants = [p for p in event_details['participants'] if p['is_accepted']]
+            pending_participants = [p for p in event_details['participants'] if not p['is_accepted']]
+            
+            # Mostrar participantes aceptados
+            if accepted_participants:
+                st.markdown("**✅ Aceptados:**")
+                for participant in accepted_participants:
+                    badge = "👑" if participant['user_id'] == event_details['creator_id'] else "👤"
+                    st.write(f"- {badge} {participant['username']}")
+            
+            # Mostrar participantes pendientes
+            if pending_participants:
+                st.markdown("**⏳ Pendientes:**")
+                for participant in pending_participants:
+                    st.write(f"- ⏳ {participant['username']}")
         else:
             st.info("No hay participantes en este evento")
-
+        
         # Botón para cerrar detalles
         if st.button("Cerrar detalles", key=f"close_details_{event_id}"):
+            st.session_state[f'show_details_{event_id}'] = False
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"Error al cargar detalles del evento: {str(e)}")
+        # Botón para cerrar detalles
+        if st.button("Cerrar detalles", key=f"close_details_{event_id}_error"):
             st.session_state[f'show_details_{event_id}'] = False
             st.rerun()

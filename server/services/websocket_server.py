@@ -9,7 +9,7 @@ from services.auth_service import AuthService
 logging.basicConfig(level=logging.INFO)
 auth_service = AuthService()
 
-async def websocket_handler(websocket, path):
+async def websocket_handler(websocket):
     """Manejador principal de conexiones WebSocket"""
     user_id = None
     
@@ -49,12 +49,24 @@ async def websocket_handler(websocket, path):
         if user_id:
             await websocket_manager.disconnect(websocket, user_id)
 
-async def start_websocket_server(host='0.0.0.0', port=8765):
+async def start_websocket_server(host='0.0.0.0', port=8767):
     """Iniciar servidor WebSocket"""
     # Usar host desde variable de entorno o default
     host = os.getenv('WEBSOCKET_HOST', host)
     port = int(os.getenv('WEBSOCKET_PORT', port))
     
-    server = await websockets.serve(websocket_handler, host, port)
-    logging.info(f"Servidor WebSocket iniciado en ws://{host}:{port}")
-    return server
+    # Try to start server, if port is busy try next port
+    original_port = port
+    while True:
+        try:
+            server = await websockets.serve(websocket_handler, host, port)
+            logging.info(f"Servidor WebSocket iniciado en ws://{host}:{port}")
+            return server
+        except OSError as e:
+            if "Only one usage of each socket address" in str(e) or "only one usage of each socket address" in str(e).lower():
+                logging.warning(f"Puerto {port} ocupado, intentando con {port + 1}")
+                port += 1
+                if port > original_port + 100:  # Don't go too high
+                    raise e
+            else:
+                raise e

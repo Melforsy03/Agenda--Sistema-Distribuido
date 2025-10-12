@@ -1,26 +1,31 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -e
 
-# Iniciar servidor WebSocket en segundo plano
-echo "Iniciando servidor WebSocket en puerto 8765..."
-python -c "
-import asyncio
-import sys
-import os
-sys.path.append('/app')
-from websocket_server import start_websocket_server
+echo "🚀 Iniciando Agenda Distribuida..."
 
-async def main():
-    server = await start_websocket_server(host='0.0.0.0', port=8765)
-    print(f'WebSocket server running on 0.0.0.0:8765')
-    await server.wait_closed()
+# --- 1. Iniciar el backend FastAPI + WebSocket ---
+echo "▶️ Iniciando backend (FastAPI + WebSocket)..."
+python -m main &
+BACKEND_PID=$!
 
-# Ejecutar en segundo plano
-asyncio.ensure_future(main())
-" &
+# Esperar a que levante el backend (puerto 8000 y 8765)
+sleep 4
 
-# Esperar un momento para que WebSocket inicie
-sleep 3
+# --- 2. Iniciar el frontend Streamlit ---
+echo "▶️ Iniciando frontend (Streamlit)..."
+streamlit run app.py --server.port=8501 --server.address=0.0.0.0 &
+FRONTEND_PID=$!
 
-# Iniciar Streamlit
-echo "Iniciando Streamlit en puerto 8501..."
-exec streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+# --- 3. Mostrar URLs ---
+echo "============================================"
+echo "✅ Agenda Distribuida en ejecución"
+echo "Frontend (Streamlit): http://localhost:8501"
+echo "Backend (FastAPI):   http://localhost:8000"
+echo "WebSocket:           ws://localhost:8765"
+echo "============================================"
+echo
+echo "Para detener todo, usa: ./stop_services.sh"
+echo
+
+# Mantener script vivo hasta que se cierre alguno de los procesos
+wait $BACKEND_PID $FRONTEND_PID

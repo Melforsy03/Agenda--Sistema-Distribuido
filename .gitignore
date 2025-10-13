@@ -16,3 +16,4 @@ __pycache__/
 test_auth.py
 check_users.py
 test_auth.db
+.sesions/

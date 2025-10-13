@@ -45,21 +45,36 @@ def show_groups_view(user_id):
             st.subheader(f"{leader_badge}🏢 {gname} {'👑 (Jerárquico)' if hier else '👥 (No jerárquico)'}")
 
             # Opciones de visualización
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button(f"📊 Ver agendas", key=f"view_{gid}"):
-                    st.session_state.current_group_view = gid
-            with col2:
-                if st.button(f"🕐 Disponibilidad", key=f"availability_{gid}"):
-                    st.session_state.common_availability_group = gid
-            with col3:
-                if is_leader:
+            if is_leader:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    if st.button(f"📊 Ver agendas", key=f"view_{gid}"):
+                        st.session_state.current_group_view = gid
+                with col2:
+                    if st.button(f"🕐 Disponibilidad", key=f"availability_{gid}"):
+                        st.session_state.common_availability_group = gid
+                with col3:
                     if st.button(f"✏️ Editar grupo", key=f"edit_{gid}"):
                         st.session_state[f'editing_group_{gid}'] = True
+                with col4:
+                    if st.button(f"🗑️", key=f"delete_btn_{gid}", help="Eliminar grupo"):
+                        st.session_state[f'deleting_group_{gid}'] = True
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button(f"📊 Ver agendas", key=f"view_{gid}"):
+                        st.session_state.current_group_view = gid
+                with col2:
+                    if st.button(f"🕐 Disponibilidad", key=f"availability_{gid}"):
+                        st.session_state.common_availability_group = gid
 
-            # NUEVO: Panel de edición para líderes
+            # Panel de edición para líderes
             if is_leader and st.session_state.get(f'editing_group_{gid}', False):
                 show_group_edit_panel(user_id, gid, gname)
+
+            # Panel de confirmación de eliminación
+            if is_leader and st.session_state.get(f'deleting_group_{gid}', False):
+                show_delete_group_confirmation(user_id, gid, gname)
 
             # Mostrar miembros con sus roles y opciones de gestión
             members = GroupService().list_group_members(gid)
@@ -133,6 +148,54 @@ def show_group_edit_panel(user_id, group_id, current_name):
             if st.button("❌ Cancelar", key=f"cancel_edit_{group_id}"):
                 st.session_state[f'editing_group_{group_id}'] = False
                 st.rerun()
+
+def show_delete_group_confirmation(user_id, group_id, group_name):
+    """Panel de confirmación de eliminación de grupo"""
+    st.markdown("---")
+    st.error("### ⚠️ Eliminar grupo")
+    st.warning(f"Estás a punto de eliminar el grupo **{group_name}**")
+
+    st.write("**Esta acción es irreversible y eliminará:**")
+    st.write("- ❌ Todos los miembros del grupo")
+    st.write("- ❌ Todas las invitaciones pendientes")
+    st.write("- ❌ Todos los eventos del grupo")
+
+    confirm_text = st.text_input(
+        "Escribe 'ELIMINAR' para confirmar:",
+        key=f"confirm_delete_{group_id}"
+    )
+
+    col_delete, col_cancel = st.columns(2)
+    with col_delete:
+        if st.button("🗑️ Eliminar permanentemente", key=f"confirm_delete_btn_{group_id}", type="primary"):
+            if confirm_text == "ELIMINAR":
+                async def delete_group_async():
+                    return await GroupService().delete_group(group_id, user_id)
+
+                success, message = asyncio.run(delete_group_async())
+                if success:
+                    st.success(f"✅ {message}")
+                    # Limpiar estados relacionados
+                    if f'deleting_group_{group_id}' in st.session_state:
+                        del st.session_state[f'deleting_group_{group_id}']
+                    if f'editing_group_{group_id}' in st.session_state:
+                        del st.session_state[f'editing_group_{group_id}']
+                    if f'available_slots_{group_id}' in st.session_state:
+                        del st.session_state[f'available_slots_{group_id}']
+                    if hasattr(st.session_state, 'current_group_view') and st.session_state.current_group_view == group_id:
+                        delattr(st.session_state, 'current_group_view')
+                    if hasattr(st.session_state, 'common_availability_group') and st.session_state.common_availability_group == group_id:
+                        delattr(st.session_state, 'common_availability_group')
+                    st.rerun()
+                else:
+                    st.error(f"❌ {message}")
+            else:
+                st.error("❌ Debes escribir 'ELIMINAR' para confirmar")
+
+    with col_cancel:
+        if st.button("❌ Cancelar", key=f"cancel_delete_{group_id}"):
+            st.session_state[f'deleting_group_{group_id}'] = False
+            st.rerun()
 
 def show_member_management(leader_id, group_id, member_details):
     """Panel de gestión de miembros para líderes"""
@@ -252,23 +315,66 @@ def show_common_availability(group_id):
             duration
         )
 
+        # Guardar resultados en session_state
+        st.session_state[f'available_slots_{group_id}'] = available_slots
+
+    # Mostrar resultados si existen en session_state
+    if f'available_slots_{group_id}' in st.session_state:
+        available_slots = st.session_state[f'available_slots_{group_id}']
+
         if available_slots:
             st.success(f"✅ Encontrados {len(available_slots)} horarios disponibles")
 
             # Mostrar en una tabla más organizada
             st.markdown("### Horarios disponibles para todos:")
 
-            for idx, slot in enumerate(available_slots[:20], 1):  # Mostrar máximo 20
+            # Inicializar página si no existe
+            if f'page_{group_id}' not in st.session_state:
+                st.session_state[f'page_{group_id}'] = 0
+
+            # Configuración de paginación
+            items_per_page = 20
+            total_pages = (len(available_slots) - 1) // items_per_page + 1
+            current_page = st.session_state[f'page_{group_id}']
+
+            # Calcular índices
+            start_idx = current_page * items_per_page
+            end_idx = min(start_idx + items_per_page, len(available_slots))
+
+            # Mostrar slots de la página actual
+            for idx, slot in enumerate(available_slots[start_idx:end_idx], start_idx + 1):
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.write(f"**{idx}.** 📅 {slot['start_time']} ➡️ {slot['end_time']}")
                 with col2:
                     if st.button("Agendar", key=f"schedule_{group_id}_{idx}"):
-                        st.info("Redirigiendo a crear evento...")
-                        # Aquí se podría pre-llenar el formulario de crear evento
+                        # Guardar el slot seleccionado y redirigir a crear evento
+                        st.session_state['prefill_start'] = slot['start_time']
+                        st.session_state['prefill_end'] = slot['end_time']
+                        st.session_state['prefill_group_id'] = group_id
+                        st.session_state['current_view'] = 'events'
+                        st.session_state['show_create_event'] = True
+                        st.rerun()
 
-            if len(available_slots) > 20:
-                st.info(f"Mostrando primeros 20 de {len(available_slots)} horarios disponibles")
+            # Controles de paginación
+            if total_pages > 1:
+                st.markdown("---")
+                col1, col2, col3 = st.columns([1, 2, 1])
+
+                with col1:
+                    if current_page > 0:
+                        if st.button("⬅️ Anterior", key=f"prev_{group_id}"):
+                            st.session_state[f'page_{group_id}'] -= 1
+                            st.rerun()
+
+                with col2:
+                    st.write(f"Página {current_page + 1} de {total_pages} ({start_idx + 1}-{end_idx} de {len(available_slots)})")
+
+                with col3:
+                    if current_page < total_pages - 1:
+                        if st.button("Siguiente ➡️", key=f"next_{group_id}"):
+                            st.session_state[f'page_{group_id}'] += 1
+                            st.rerun()
         else:
             st.warning("❌ No hay horarios comunes disponibles en este período")
             st.info("Intenta con un período de tiempo más amplio o menor duración")

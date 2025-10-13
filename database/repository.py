@@ -256,3 +256,31 @@ class Database:
             FROM groups WHERE id = ?
         ''', (group_id,))
         return self.cursor.fetchone()
+
+    def delete_group(self, group_id):
+        """Eliminar un grupo y todas sus relaciones (invitaciones, miembros, eventos)"""
+        try:
+            # Eliminar invitaciones pendientes del grupo
+            self.cursor.execute('DELETE FROM group_invitations WHERE group_id = ?', (group_id,))
+
+            # Eliminar miembros del grupo
+            self.cursor.execute('DELETE FROM user_groups WHERE group_id = ?', (group_id,))
+
+            # Eliminar participantes de eventos del grupo
+            self.cursor.execute('''
+                DELETE FROM event_participants
+                WHERE event_id IN (SELECT id FROM events WHERE group_id = ?)
+            ''', (group_id,))
+
+            # Eliminar eventos del grupo
+            self.cursor.execute('DELETE FROM events WHERE group_id = ?', (group_id,))
+
+            # Eliminar el grupo
+            self.cursor.execute('DELETE FROM groups WHERE id = ?', (group_id,))
+
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error al eliminar grupo: {e}")
+            self.conn.rollback()
+            return False

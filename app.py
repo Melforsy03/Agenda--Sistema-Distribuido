@@ -98,10 +98,21 @@ def main():
         # Construir etiquetas con badges
         invitations_label = f"📧 Invitaciones ({total_invitations})" if total_invitations > 0 else "📧 Invitaciones"
 
+        # Verificar si hay una vista específica solicitada
+        if 'current_view' in st.session_state:
+            requested_view = st.session_state.pop('current_view')
+            if requested_view == 'events':
+                default_page = "➕ Crear Evento"
+            else:
+                default_page = "📅 Calendario"
+        else:
+            default_page = "📅 Calendario"
+
         # Navegación
         page = st.sidebar.radio(
             "Navegación",
-            ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"]
+            ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"],
+            index=["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"].index(default_page) if default_page in ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"] else 0
         )
         
         if st.sidebar.button("🚪 Cerrar sesión"):

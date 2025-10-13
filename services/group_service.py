@@ -123,3 +123,37 @@ class GroupService:
         """Obtener conteo de invitaciones a grupos pendientes."""
         invitations = self.pending_invitations(user_id)
         return len(invitations) if invitations else 0
+
+    async def delete_group(self, group_id, user_id):
+        """Eliminar un grupo completamente (solo líderes)"""
+        # Verificar que el usuario es líder
+        if not self.db.is_group_leader(user_id, group_id):
+            return False, "Solo los líderes pueden eliminar el grupo"
+
+        # Obtener información del grupo antes de eliminarlo
+        group_info = self.db.get_group_info(group_id)
+        if not group_info:
+            return False, "Grupo no encontrado"
+
+        group_name = group_info[1]
+
+        # Obtener todos los miembros para notificarles
+        members = self.db.get_group_members(group_id)
+
+        # Eliminar el grupo
+        success = self.db.delete_group(group_id)
+
+        if success:
+            # Notificar a todos los miembros (excepto quien eliminó)
+            for member_id, _ in members:
+                if member_id != user_id:
+                    await websocket_manager.send_to_user(member_id, {
+                        "type": "group_deleted",
+                        "group_id": group_id,
+                        "group_name": group_name,
+                        "deleted_by": user_id
+                    })
+
+            return True, f"Grupo '{group_name}' eliminado exitosamente"
+        else:
+            return False, "Error al eliminar el grupo"

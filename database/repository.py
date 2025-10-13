@@ -31,7 +31,20 @@ class Database:
     def check_password(self, username, password):
         user = self.get_user(username)
         if user:
-            return bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8'))
+            try:
+                stored_hash = user[2]
+                # Asegurarse de que el hash esté en bytes
+                if isinstance(stored_hash, str):
+                    stored_hash = stored_hash.encode('utf-8')
+
+                # Asegurarse de que la contraseña esté en bytes
+                if isinstance(password, str):
+                    password = password.encode('utf-8')
+
+                return bcrypt.checkpw(password, stored_hash)
+            except Exception as e:
+                print(f"Error al verificar contraseña: {e}")
+                return False
         return False
 
     def get_user_id(self, username):
@@ -74,8 +87,9 @@ class Database:
             LEFT JOIN users u ON e.creator_id = u.id
             LEFT JOIN groups g ON e.group_id = g.id
             WHERE (ep.user_id = ? OR e.creator_id = ?)
+              AND (ep.is_accepted = 1 OR e.creator_id = ?)
             ORDER BY e.start_time
-        ''', (user_id, user_id))
+        ''', (user_id, user_id, user_id))
         return self.cursor.fetchall()
 
     def check_conflict(self, user_id, start_time, end_time):
@@ -86,7 +100,8 @@ class Database:
             SELECT start_time, end_time FROM events e
             LEFT JOIN event_participants ep ON e.id = ep.event_id
             WHERE (ep.user_id = ? OR e.creator_id = ?)
-        ''', (user_id, user_id))
+              AND (ep.is_accepted = 1 OR e.creator_id = ?)
+        ''', (user_id, user_id, user_id))
 
         for s, e in self.cursor.fetchall():
             if start < datetime.strptime(e, '%Y-%m-%d %H:%M:%S') and end > datetime.strptime(s, '%Y-%m-%d %H:%M:%S'):
@@ -118,13 +133,33 @@ class Database:
             return False
 
     def invite_user_to_group(self, group_id, invited_user_id, inviter_user_id):
-        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Verificar si el usuario ya es miembro del grupo
         self.cursor.execute('''
-            INSERT INTO group_invitations (group_id, invited_user_id, inviter_user_id, created_at)
-            VALUES (?, ?, ?, ?)
-        ''', (group_id, invited_user_id, inviter_user_id, created_at))
-        self.conn.commit()
-        return True
+            SELECT 1 FROM user_groups
+            WHERE user_id = ? AND group_id = ?
+        ''', (invited_user_id, group_id))
+        if self.cursor.fetchone():
+            return False  # Ya es miembro del grupo
+
+        # Verificar si ya existe una invitación pendiente
+        self.cursor.execute('''
+            SELECT 1 FROM group_invitations
+            WHERE group_id = ? AND invited_user_id = ? AND status = 'pending'
+        ''', (group_id, invited_user_id))
+        if self.cursor.fetchone():
+            return False  # Ya tiene una invitación pendiente
+
+        # Crear la invitación
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            self.cursor.execute('''
+                INSERT INTO group_invitations (group_id, invited_user_id, inviter_user_id, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (group_id, invited_user_id, inviter_user_id, created_at))
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
     def get_groups_by_user(self, user_id):
         self.cursor.execute('''
@@ -168,3 +203,84 @@ class Database:
                                 (user_id, group_id, False))
         self.conn.commit()
         return True
+
+    def update_group(self, group_id, name=None, description=None):
+        """Actualizar nombre y/o descripción de un grupo"""
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+
+        if not updates:
+            return True
+
+        params.append(group_id)
+        query = f"UPDATE groups SET {', '.join(updates)} WHERE id = ?"
+
+        try:
+            self.cursor.execute(query, params)
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def remove_user_from_group(self, user_id, group_id):
+        """Eliminar un usuario de un grupo"""
+        try:
+            self.cursor.execute('DELETE FROM user_groups WHERE user_id = ? AND group_id = ?',
+                              (user_id, group_id))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def is_group_leader(self, user_id, group_id):
+        """Verificar si un usuario es líder de un grupo"""
+        self.cursor.execute('''
+            SELECT is_leader FROM user_groups
+            WHERE user_id = ? AND group_id = ?
+        ''', (user_id, group_id))
+        result = self.cursor.fetchone()
+        return result and result[0]
+
+    def get_group_info(self, group_id):
+        """Obtener información completa de un grupo"""
+        self.cursor.execute('''
+            SELECT id, name, description, is_hierarchical, creator_id
+            FROM groups WHERE id = ?
+        ''', (group_id,))
+        return self.cursor.fetchone()
+
+    def delete_group(self, group_id):
+        """Eliminar un grupo y todas sus relaciones (invitaciones, miembros, eventos)"""
+        try:
+            # Eliminar invitaciones pendientes del grupo
+            self.cursor.execute('DELETE FROM group_invitations WHERE group_id = ?', (group_id,))
+
+            # Eliminar miembros del grupo
+            self.cursor.execute('DELETE FROM user_groups WHERE group_id = ?', (group_id,))
+
+            # Eliminar participantes de eventos del grupo
+            self.cursor.execute('''
+                DELETE FROM event_participants
+                WHERE event_id IN (SELECT id FROM events WHERE group_id = ?)
+            ''', (group_id,))
+
+            # Eliminar eventos del grupo
+            self.cursor.execute('DELETE FROM events WHERE group_id = ?', (group_id,))
+
+            # Eliminar el grupo
+            self.cursor.execute('DELETE FROM groups WHERE id = ?', (group_id,))
+
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error al eliminar grupo: {e}")
+            self.conn.rollback()
+            return False

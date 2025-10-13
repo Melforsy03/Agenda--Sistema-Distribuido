@@ -14,6 +14,16 @@ class EventService:
                          participants_ids=None, is_hierarchical=False):
         """Crea un evento validando conflictos de horario con soporte para jerarquías."""
 
+        # Validar que la fecha de inicio sea anterior a la fecha de fin
+        from datetime import datetime
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            if start_dt >= end_dt:
+                return None, "La fecha y hora de inicio debe ser anterior a la fecha y hora de finalización"
+        except ValueError:
+            return None, "Formato de fecha inválido"
+
         # Lógica para eventos jerárquicos
         if is_hierarchical and group_id:
             return await self.hierarchy.create_hierarchical_event(
@@ -352,3 +362,8 @@ class EventService:
         })
 
         return True, "Has salido del evento"
+
+    def get_pending_invitations_count(self, user_id):
+        """Obtener conteo de invitaciones a eventos pendientes."""
+        invitations = self.get_pending_event_invitations(user_id)
+        return len(invitations) if invitations else 0

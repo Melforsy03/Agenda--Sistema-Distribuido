@@ -133,13 +133,33 @@ class Database:
             return False
 
     def invite_user_to_group(self, group_id, invited_user_id, inviter_user_id):
-        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Verificar si el usuario ya es miembro del grupo
         self.cursor.execute('''
-            INSERT INTO group_invitations (group_id, invited_user_id, inviter_user_id, created_at)
-            VALUES (?, ?, ?, ?)
-        ''', (group_id, invited_user_id, inviter_user_id, created_at))
-        self.conn.commit()
-        return True
+            SELECT 1 FROM user_groups
+            WHERE user_id = ? AND group_id = ?
+        ''', (invited_user_id, group_id))
+        if self.cursor.fetchone():
+            return False  # Ya es miembro del grupo
+
+        # Verificar si ya existe una invitación pendiente
+        self.cursor.execute('''
+            SELECT 1 FROM group_invitations
+            WHERE group_id = ? AND invited_user_id = ? AND status = 'pending'
+        ''', (group_id, invited_user_id))
+        if self.cursor.fetchone():
+            return False  # Ya tiene una invitación pendiente
+
+        # Crear la invitación
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            self.cursor.execute('''
+                INSERT INTO group_invitations (group_id, invited_user_id, inviter_user_id, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (group_id, invited_user_id, inviter_user_id, created_at))
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
     def get_groups_by_user(self, user_id):
         self.cursor.execute('''

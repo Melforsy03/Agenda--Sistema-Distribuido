@@ -5,9 +5,19 @@ import asyncio
 
 def show_invitations_view(user_id):
     st.header("📧 Invitaciones pendientes")
+    # Obtener conteos para los badges
+    group_service = GroupService()
+    event_service = EventService()
+
+    groups_count = group_service.get_pending_invitations_count(user_id)
+    events_count = event_service.get_pending_invitations_count(user_id)
+
+    # Crear etiquetas con badges para las pestañas
+    groups_label = f"👥 Grupos ({groups_count})" if groups_count > 0 else "👥 Grupos"
+    events_label = f"📅 Eventos ({events_count})" if events_count > 0 else "📅 Eventos"
 
     # Tabs para separar invitaciones a grupos y eventos
-    tab1, tab2 = st.tabs(["👥 Grupos", "📅 Eventos"])
+    tab1, tab2 = st.tabs([groups_label, events_label])
 
     with tab1:
         show_group_invitations(user_id)

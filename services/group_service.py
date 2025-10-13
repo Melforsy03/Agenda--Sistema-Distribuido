@@ -13,6 +13,7 @@ class GroupService:
             return None, "El grupo ya existe"
 
         invited = 0
+        skipped = 0
         if members:
             for m in members:
                 if self.db.invite_user_to_group(group_id, m, creator_id):
@@ -24,7 +25,13 @@ class GroupService:
                         "group_name": name,
                         "inviter_id": creator_id
                     })
-        return group_id, invited
+                else:
+                    skipped += 1
+
+        message = f"Invitaciones enviadas: {invited}"
+        if skipped > 0:
+            message += f" (omitidos: {skipped} - ya son miembros o tienen invitación pendiente)"
+        return group_id, message
 
     # Mantener métodos existentes...
     def list_user_groups(self, user_id):
@@ -39,14 +46,16 @@ class GroupService:
             group_name = self.db.cursor.execute(
                 'SELECT name FROM groups WHERE id = ?', (group_id,)
             ).fetchone()[0]
-            
+
             await websocket_manager.send_to_user(invited_user_id, {
                 "type": "group_invitation",
                 "group_id": group_id,
                 "group_name": group_name,
                 "inviter_id": inviter_id
             })
-        return success
+            return True, "Invitación enviada exitosamente"
+        else:
+            return False, "El usuario ya es miembro o tiene una invitación pendiente"
 
     def pending_invitations(self, user_id):
         return self.db.get_pending_invitations(user_id)
@@ -109,3 +118,8 @@ class GroupService:
     def get_group_info(self, group_id):
         """Obtener información del grupo"""
         return self.db.get_group_info(group_id)
+
+    def get_pending_invitations_count(self, user_id):
+        """Obtener conteo de invitaciones a grupos pendientes."""
+        invitations = self.pending_invitations(user_id)
+        return len(invitations) if invitations else 0

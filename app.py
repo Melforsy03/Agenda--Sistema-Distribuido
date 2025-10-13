@@ -2,6 +2,7 @@ import streamlit as st
 import asyncio
 import threading
 import os
+import time
 from ui.login_view import show_login_page
 from ui.calendar_view import show_calendar_view
 from ui.event_view import show_create_event_view
@@ -66,22 +67,43 @@ def main():
     else:
         # Sidebar con información de conexión
         st.sidebar.title(f"👋 Hola, {st.session_state.username}")
-        
+
         # Mostrar estado de conexión WebSocket
         websocket_url = get_websocket_url()
         st.sidebar.info(f"🌐 Conectado a: {websocket_url}")
-        
+
         auth_service = AuthService()
         user_id = auth_service.get_user_id(st.session_state.username)
         st.session_state.user_id = user_id
-        
+
+        # Obtener conteos de invitaciones pendientes
+        from services.group_service import GroupService
+        from services.event_service import EventService
+
+        group_service = GroupService()
+        event_service = EventService()
+
+        groups_count = group_service.get_pending_invitations_count(user_id)
+        events_count = event_service.get_pending_invitations_count(user_id)
+        total_invitations = groups_count + events_count
+
+        # Guardar conteo anterior para detectar cambios
+        if 'previous_invitations_count' not in st.session_state:
+            st.session_state.previous_invitations_count = total_invitations
+
+        # Auto-refresh: Si hay cambios en invitaciones, actualizar
+        if st.session_state.previous_invitations_count != total_invitations:
+            st.session_state.previous_invitations_count = total_invitations
+
+        # Construir etiquetas con badges
+        invitations_label = f"📧 Invitaciones ({total_invitations})" if total_invitations > 0 else "📧 Invitaciones"
+
         # Navegación
         page = st.sidebar.radio(
             "Navegación",
-            ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", "📧 Invitaciones", "🔔 Notificaciones"]
+            ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"]
         )
         
-        st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Cerrar sesión"):
             # Eliminar sesión del servidor
             if 'session_token' in st.session_state:
@@ -105,7 +127,7 @@ def main():
             show_create_event_view(user_id)
         elif page == "👥 Grupos":
             show_groups_view(user_id)
-        elif page == "📧 Invitaciones":
+        elif page.startswith("📧 Invitaciones"):  # Maneja tanto con badge como sin badge
             show_invitations_view(user_id)
         elif page == "🔔 Notificaciones":
             show_notifications_view(user_id)

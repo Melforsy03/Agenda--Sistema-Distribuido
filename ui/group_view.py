@@ -25,12 +25,12 @@ def show_groups_view(user_id):
                     [options[s] for s in selected]
                 )
             
-            group_id, invited = asyncio.run(create_group_async())
+            group_id, message = asyncio.run(create_group_async())
             if group_id:
-                st.success(f"✅ Grupo creado (invitaciones enviadas: {invited})")
+                st.success(f"✅ Grupo creado - {message}")
                 st.rerun()
             else:
-                st.error("❌ Ese grupo ya existe")
+                st.error(f"❌ {message}")
 
     # --- Listar grupos con nuevas funcionalidades ---
     groups = GroupService().list_user_groups(user_id)
@@ -158,11 +158,11 @@ def show_member_management(leader_id, group_id, member_details):
                     leader_id
                 )
 
-            success = asyncio.run(invite_user_async())
+            success, message = asyncio.run(invite_user_async())
             if success:
-                st.success(f"✅ Invitación enviada a {selected_user}")
+                st.success(f"✅ {message}")
             else:
-                st.error("❌ Error al enviar invitación")
+                st.error(f"❌ {message}")
     else:
         st.info("No hay usuarios disponibles para invitar")
 

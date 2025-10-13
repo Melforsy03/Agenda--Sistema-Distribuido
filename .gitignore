@@ -12,3 +12,7 @@ __pycache__/
 .vscode/
 .idea/
 .streamlit/
+.sessions/
+test_auth.py
+check_users.py
+test_auth.db

@@ -1,8 +1,10 @@
 import streamlit as st
 from services.auth_service import AuthService
+from services.session_manager import SessionManager
 
 def show_login_page():
     auth = AuthService()
+    session_manager = SessionManager()
 
     st.title("📅 Sistema de Agenda - Login")
 
@@ -15,9 +17,25 @@ def show_login_page():
         password = st.text_input("Contraseña", type="password")
 
         if st.button("Iniciar sesión"):
+            # Eliminar espacios en blanco al inicio y final
+            username = username.strip()
+            password = password.strip()
+
             if auth.login(username, password):
+                user_id = auth.get_user_id(username)
+
+                # Crear token de sesión
+                token = session_manager.create_session(username, user_id)
+
+                # Guardar en session state
                 st.session_state.logged_in = True
                 st.session_state.username = username
+                st.session_state.user_id = user_id
+                st.session_state.session_token = token
+
+                # Agregar token a query params para persistencia
+                st.query_params['session_token'] = token
+
                 st.success("✅ Sesión iniciada")
                 st.rerun()
             else:
@@ -33,7 +51,13 @@ def show_login_page():
         password = st.text_input("Nueva contraseña", type="password")
 
         if st.button("Registrarse"):
-            if auth.register(username, password):
+            # Eliminar espacios en blanco al inicio y final
+            username = username.strip()
+            password = password.strip()
+
+            if not username or not password:
+                st.error("❌ Usuario y contraseña no pueden estar vacíos")
+            elif auth.register(username, password):
                 st.success("✅ Usuario creado, ahora inicia sesión")
                 st.session_state.show_register = False
                 st.rerun()

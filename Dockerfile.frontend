@@ -1,0 +1,20 @@
+# =========================
+# Dockerfile.frontend
+# =========================
+FROM python:3.10-slim
+
+WORKDIR /app
+COPY . .
+
+RUN pip install --no-cache-dir streamlit requests websockets httpx
+
+# Permitir importaciones desde raíz
+ENV PYTHONPATH=/app
+ENV API_URL=http://backend:8766
+ENV WEBSOCKET_HOST=backend
+ENV WEBSOCKET_PORT=8767
+
+EXPOSE 8501
+
+# Ejecutar Streamlit (ajusta la ruta si tu app.py está en /frontend)
+CMD ["streamlit", "run", "frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0"]

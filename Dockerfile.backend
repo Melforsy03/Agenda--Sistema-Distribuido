@@ -1,0 +1,25 @@
+# =========================
+# Dockerfile.backend
+# =========================
+FROM python:3.10-slim
+
+# Crear directorio de trabajo
+WORKDIR /app
+
+# Copiar todo el proyecto
+COPY . .
+
+# Instalar dependencias principales
+RUN pip install --no-cache-dir fastapi uvicorn aiohttp httpx pydantic sqlite3 websockets
+
+# Asegurar que Python vea la carpeta raíz como módulo
+ENV PYTHONPATH=/app
+
+# Exponer los puertos (API, WS, RAFT, Coordinator)
+EXPOSE 8766 8767 8700 8801 8802 8803 8804
+
+# Variables de entorno básicas
+ENV DOCKER_ENV=true
+
+# Comando por defecto (puedes cambiarlo al coordinador o al backend principal)
+CMD ["python", "backend/main.py"]

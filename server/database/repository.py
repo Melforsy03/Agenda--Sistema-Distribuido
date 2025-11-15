@@ -5,7 +5,10 @@ from .schema import setup_database
 import os
 
 class Database:
-    def __init__(self, db_name='agenda.db'):
+    def __init__(self, db_name=None):
+        # Use environment variable for DB path, with fallback to default
+        if db_name is None:
+            db_name = os.getenv('DB_PATH', 'agenda.db')
         setup_database(db_name)
         self.db_name = db_name
         self.conn = sqlite3.connect(db_name, check_same_thread=False)
@@ -63,21 +66,43 @@ class Database:
 
     # ---------- Eventos ----------
     def add_event(self, title, description, start_time, end_time, creator_id, group_id=None, is_group_event=False):
-        self.cursor.execute('''
-            INSERT INTO events (title, description, start_time, end_time, creator_id, group_id, is_group_event)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (title, description, start_time, end_time, creator_id, group_id, is_group_event))
-        self.conn.commit()
-        return self.cursor.lastrowid
+        try:
+            # Validate required fields
+            if not title:
+                raise ValueError("Title is required")
+            if not start_time:
+                raise ValueError("Start time is required")
+            if not end_time:
+                raise ValueError("End time is required")
+            if not creator_id:
+                raise ValueError("Creator ID is required")
+                
+            self.cursor.execute('''
+                INSERT INTO events (title, description, start_time, end_time, creator_id, group_id, is_group_event)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (title, description, start_time, end_time, creator_id, group_id, is_group_event))
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except Exception as e:
+            self.conn.rollback()
+            raise Exception(f"Failed to add event to database: {str(e)}")
 
     def add_participant_to_event(self, event_id, user_id, is_accepted=False):
         try:
+            if not event_id:
+                raise ValueError("Event ID is required")
+            if not user_id:
+                raise ValueError("User ID is required")
+                
             self.cursor.execute('INSERT INTO event_participants (event_id, user_id, is_accepted) VALUES (?, ?, ?)',
                                 (event_id, user_id, is_accepted))
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
+        except Exception as e:
+            self.conn.rollback()
+            raise Exception(f"Failed to add participant to event: {str(e)}")
 
     def get_events_by_user(self, user_id):
         self.cursor.execute('''

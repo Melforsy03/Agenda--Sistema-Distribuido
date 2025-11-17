@@ -52,9 +52,15 @@ class EventService:
 
         if participants_ids:
             try:
-                conflict_users = [p for p in participants_ids if self.db.check_conflict(p, start_time, end_time)]
+                conflict_users = []
+                for p in participants_ids:
+                    if self.db.check_conflict(p, start_time, end_time):
+                        username = self.db.get_username(p)
+                        conflict_users.append(username if username else f"Usuario {p}")
+                
                 if conflict_users:
-                    return None, f"Conflicto con participantes: {conflict_users}"
+                    users_str = ", ".join(conflict_users)
+                    return None, f"Los siguientes usuarios tienen conflictos de horario: {users_str}"
             except Exception as e:
                 return None, f"Error al verificar conflictos de participantes: {str(e)}"
 

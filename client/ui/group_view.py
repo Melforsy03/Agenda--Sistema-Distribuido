@@ -3,44 +3,103 @@ import asyncio
 from datetime import datetime, timedelta
 
 def show_groups_view(user_id, api_client, token):
-    st.header("👥 Mis grupos")
+    st.header("👥 Gestión de Grupos")
 
-    # --- Crear nuevo grupo ---
-    with st.expander("Crear grupo", expanded=False):
-        name = st.text_input("Nombre del grupo")
-        description = st.text_area("Descripción")
-        is_hierarchical = st.checkbox("Jerárquico")
-        try:
-            users = api_client.list_users(token)
-            options = {u[1]: u[0] for u in users if u[0] != user_id}
-            selected = st.multiselect("Invitar miembros", list(options.keys()))
+    # Crear tabs para separar creación y listado
+    tab1, tab2 = st.tabs(["📋 Mis Grupos", "➕ Crear Grupo"])
+    
+    # --- TAB 1: Listar grupos ---
+    with tab1:
+        show_groups_list(user_id, api_client, token)
+    
+    # --- TAB 2: Crear nuevo grupo ---
+    with tab2:
+        show_create_group_form(user_id, api_client, token)
 
-            if st.button("Crear grupo"):
-                try:
-                    members = [options[s] for s in selected]
-                    result = api_client.create_group(name, description, is_hierarchical, token, members)
-                    st.success(f"✅ Grupo creado - {result['message']}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Error al crear grupo: {str(e)}")
-        except Exception as e:
-            st.error(f"Error al cargar usuarios: {str(e)}")
+def show_create_group_form(user_id, api_client, token):
+    """Formulario para crear un nuevo grupo"""
+    st.subheader("➕ Crear nuevo grupo")
+    
+    # Limpiar estado si se acaba de crear un grupo
+    if st.session_state.get('group_created', False):
+        st.session_state.group_created = False
+    
+    name = st.text_input("Nombre del grupo", key="new_group_name")
+    description = st.text_area("Descripción", key="new_group_desc")
+    is_hierarchical = st.checkbox("Grupo jerárquico", key="new_group_hier")
+    
+    st.markdown("---")
+    st.subheader("👥 Invitar miembros (opcional)")
+    
+    try:
+        users = api_client.list_users(token)
+        options = {u[1]: u[0] for u in users if u[0] != user_id}
+        
+        if options:
+            selected = st.multiselect(
+                "Selecciona usuarios para invitar al grupo",
+                list(options.keys()),
+                key="new_group_members"
+            )
+        else:
+            st.info("No hay otros usuarios disponibles para invitar")
+            selected = []
 
+        st.markdown("---")
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("✅ Crear Grupo", type="primary", use_container_width=True):
+                if not name or not name.strip():
+                    st.error("❌ El nombre del grupo no puede estar vacío")
+                elif len(name.strip()) < 3:
+                    st.error("❌ El nombre debe tener al menos 3 caracteres")
+                else:
+                    try:
+                        members = [options[s] for s in selected]
+                        result = api_client.create_group(name.strip(), description.strip(), is_hierarchical, token, members)
+                        st.success(f"✅ {result['message']}")
+                        # Marcar para rerun sin intentar modificar widgets existentes
+                        st.session_state.group_created = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ {str(e)}")
+        with col2:
+            st.caption("💡 Los miembros invitados recibirán una notificación y deberán aceptar la invitación")
+            
+    except Exception as e:
+        st.error(f"❌ Error al cargar usuarios: {str(e)}")
+
+def show_groups_list(user_id, api_client, token):
+    """Listar todos los grupos del usuario"""
     # --- Listar grupos con nuevas funcionalidades ---
     try:
         groups = api_client.list_user_groups(token)
         if groups:
             for g in groups:
                 gid, gname, hier = g
-                # Check if user is leader
+                # Check if user is leader/creator
+                is_leader = False
+                creator_id = None
                 try:
                     group_info = api_client.get_group_info(gid, token)
-                    is_leader = group_info['creator_id'] == user_id
-                except:
-                    is_leader = False
+                    if group_info:
+                        creator_id = group_info.get('creator_id')
+                        is_leader = creator_id == user_id
+                    
+                except Exception as e:
+                    st.error(f"⚠️ ERROR al obtener info del grupo '{gname}': {str(e)}")
 
                 # Header con indicador de líder
-                leader_badge = "👑 LÍDER - " if is_leader else ""
+                if is_leader:
+                    leader_badge = "👑 CREADOR - "
+                elif creator_id is None:
+                    # Grupo sin creador asignado - todos pueden administrarlo
+                    leader_badge = "⚠️ SIN CREADOR - "
+                    is_leader = True  # Permitir gestión si no hay creador
+                else:
+                    leader_badge = ""
+                    
                 st.subheader(f"{leader_badge}🏢 {gname} {'👑 (Jerárquico)' if hier else '👥 (No jerárquico)'}")
 
                 # Opciones de visualización
@@ -53,10 +112,10 @@ def show_groups_view(user_id, api_client, token):
                         if st.button(f"🕐 Disponibilidad", key=f"availability_{gid}"):
                             st.session_state.common_availability_group = gid
                     with col3:
-                        if st.button(f"✏️ Editar grupo", key=f"edit_{gid}"):
+                        if st.button(f"✏️ Editar", key=f"edit_{gid}"):
                             st.session_state[f'editing_group_{gid}'] = True
                     with col4:
-                        if st.button(f"🗑️", key=f"delete_btn_{gid}", help="Eliminar grupo"):
+                        if st.button(f"🗑️ Eliminar", key=f"delete_btn_{gid}", type="secondary"):
                             st.session_state[f'deleting_group_{gid}'] = True
                 else:
                     col1, col2 = st.columns(2)
@@ -78,13 +137,25 @@ def show_groups_view(user_id, api_client, token):
                 # Mostrar miembros con sus roles y opciones de gestión
                 try:
                     members = api_client.list_group_members(gid, token)
-                    # Note: Hierarchy service functionality would need to be implemented in the API
-                    # For now, we'll skip the hierarchical roles
-                    leaders = []
-                    regular_members = [username for _, username in members]
-
-                    st.write("**Líderes:** " + ", ".join([f"👑 {l}" for l in leaders]))
-                    st.write("**Miembros:** " + ", ".join(regular_members))
+                    
+                    # Obtener el nombre del creador
+                    creator_name = None
+                    if creator_id is not None:
+                        for member_id, member_name in members:
+                            if member_id == creator_id:
+                                creator_name = member_name
+                                break
+                    
+                    # Mostrar creador si existe
+                    if creator_name:
+                        st.write(f"**👑 Creador:** {creator_name}")
+                        # Separar creador de otros miembros
+                        other_members = [username for mid, username in members if mid != creator_id]
+                        if other_members:
+                            st.write("**👥 Miembros:** " + ", ".join(other_members))
+                    else:
+                        # Si no se identificó creador, mostrar todos como miembros
+                        st.write("**👥 Miembros:** " + ", ".join([username for _, username in members]))
 
                     # NUEVO: Gestión de miembros para líderes
                     if is_leader:
@@ -158,33 +229,43 @@ def show_delete_group_confirmation(user_id, group_id, group_name, api_client, to
     st.warning(f"Estás a punto de eliminar el grupo **{group_name}**")
 
     st.write("**Esta acción es irreversible y eliminará:**")
+    st.write("- ❌ El grupo completamente")
     st.write("- ❌ Todos los miembros del grupo")
     st.write("- ❌ Todas las invitaciones pendientes")
     st.write("- ❌ Todos los eventos del grupo")
+    st.write("")
+    st.info("ℹ️ Solo el creador del grupo puede eliminarlo")
 
     confirm_text = st.text_input(
-        "Escribe 'ELIMINAR' para confirmar:",
-        key=f"confirm_delete_{group_id}"
+        "Para confirmar, escribe exactamente: **ELIMINAR**",
+        key=f"confirm_delete_{group_id}",
+        placeholder="Escribe ELIMINAR aquí"
     )
 
     col_delete, col_cancel = st.columns(2)
-    with col_delete:
-        if st.button("🗑️ Eliminar permanentemente", key=f"confirm_delete_btn_{group_id}", type="primary"):
-            if confirm_text == "ELIMINAR":
-                try:
-                    result = api_client.delete_group(group_id, token)
-                    st.success(result['message'])
-                    st.session_state[f'deleting_group_{group_id}'] = False
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al eliminar grupo: {str(e)}")
-            else:
-                st.error("❌ Debes escribir 'ELIMINAR' para confirmar")
-
     with col_cancel:
         if st.button("❌ Cancelar", key=f"cancel_delete_{group_id}"):
             st.session_state[f'deleting_group_{group_id}'] = False
             st.rerun()
+    
+    with col_delete:
+        if st.button("🗑️ Eliminar permanentemente", key=f"confirm_delete_btn_{group_id}", type="primary"):
+            if confirm_text.strip() == "ELIMINAR":
+                try:
+                    result = api_client.delete_group(group_id, token)
+                    st.success("✅ Grupo eliminado exitosamente")
+                    # Limpiar estado
+                    if f'deleting_group_{group_id}' in st.session_state:
+                        del st.session_state[f'deleting_group_{group_id}']
+                    if 'current_group_view' in st.session_state and st.session_state.current_group_view == group_id:
+                        del st.session_state.current_group_view
+                    if 'common_availability_group' in st.session_state and st.session_state.common_availability_group == group_id:
+                        del st.session_state.common_availability_group
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ {str(e)}")
+            else:
+                st.error("❌ Debes escribir exactamente 'ELIMINAR' para confirmar (en mayúsculas)")
 
 def show_member_management(leader_id, group_id, member_details, api_client, token):
     """Panel de gestión de miembros para líderes"""

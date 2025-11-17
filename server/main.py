@@ -58,6 +58,10 @@ class RespondEventInvitation(BaseModel):
     event_id: int
     accepted: bool
 
+class UpdateGroup(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
 # Dependencia para obtener el user_id desde el token
 def get_current_user(token: str):
     session_data = session_manager.get_session(token)
@@ -116,6 +120,21 @@ async def list_group_members(group_id: int, token: str):
     get_current_user(token)
     return group_service.list_group_members(group_id)
 
+@app.get("/groups/{group_id}/info")
+async def get_group_info(group_id: int, token: str):
+    get_current_user(token)
+    group_info = group_service.get_group_info(group_id)
+    if group_info:
+        return {
+            "id": group_info[0],
+            "name": group_info[1],
+            "description": group_info[2],
+            "is_hierarchical": bool(group_info[3]),
+            "creator_id": group_info[4]
+        }
+    else:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+
 @app.post("/groups/invite")
 async def invite_user(invite: InviteUser, token: str):
     user_id = get_current_user(token)
@@ -144,6 +163,33 @@ async def get_pending_invitations_count(token: str):
     user_id = get_current_user(token)
     count = group_service.get_pending_invitations_count(user_id)
     return {"count": count}
+
+@app.put("/groups/{group_id}")
+async def update_group(group_id: int, update_data: UpdateGroup, token: str):
+    user_id = get_current_user(token)
+    success, message = group_service.update_group(group_id, user_id, update_data.name, update_data.description)
+    if success:
+        return {"message": message}
+    else:
+        raise HTTPException(status_code=400, detail=message)
+
+@app.delete("/groups/{group_id}")
+async def delete_group(group_id: int, token: str):
+    user_id = get_current_user(token)
+    success, message = await group_service.delete_group(group_id, user_id)
+    if success:
+        return {"message": message}
+    else:
+        raise HTTPException(status_code=400, detail=message)
+
+@app.delete("/groups/{group_id}/members/{member_id}")
+async def remove_member(group_id: int, member_id: int, token: str):
+    user_id = get_current_user(token)
+    success, message = await group_service.remove_member(group_id, user_id, member_id)
+    if success:
+        return {"message": message}
+    else:
+        raise HTTPException(status_code=400, detail=message)
 
 # Event endpoints
 @app.post("/events")

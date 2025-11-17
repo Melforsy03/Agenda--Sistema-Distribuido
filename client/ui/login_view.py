@@ -26,6 +26,12 @@ def show_login_page(api_client):
             else:
                 try:
                     result = api_client.login(username, password)
+                    
+                    # Verificar que el resultado tenga los campos esperados
+                    if not result or "token" not in result or "user_id" not in result:
+                        st.error("❌ Error: Respuesta del servidor inválida")
+                        return
+                    
                     token = result["token"]
                     user_id = result["user_id"]
 
@@ -34,12 +40,11 @@ def show_login_page(api_client):
                     st.session_state.username = username
                     st.session_state.user_id = user_id
                     st.session_state.session_token = token
-
-                    # Agregar token a query params para persistencia
-                    st.query_params['session_token'] = token
-
-                    # Mark WebSocket as not yet connected (will connect in main app)
                     st.session_state.websocket_connected = False
+
+                    # Agregar token y user_id a query params para persistencia
+                    st.query_params['session_token'] = token
+                    st.query_params['user_id'] = str(user_id)
 
                     st.success("✅ Sesión iniciada correctamente")
                     st.rerun()

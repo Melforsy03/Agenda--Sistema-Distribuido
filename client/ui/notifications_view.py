@@ -24,8 +24,7 @@ def show_notifications_view(user_id, api_client, token, ws_client):
         # Check if handlers are already registered to avoid duplicates
         handlers_key = f"notification_handlers_registered_{user_id}"
         if handlers_key not in st.session_state:
-            ws_client.register_handler("group_invitation", notification_handler)
-            ws_client.register_handler("event_invitation", notification_handler)
+            ws_client.register_handler("event_reminder", notification_handler)
             ws_client.register_handler("event_accepted", notification_handler)
             ws_client.register_handler("event_declined", notification_handler)
             ws_client.register_handler("event_cancelled", notification_handler)

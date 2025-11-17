@@ -3,6 +3,12 @@ import asyncio
 import json
 import os
 import logging
+import atexit
+import warnings
+
+# Suppress specific websocket warnings
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*Event loop is closed.*')
+warnings.filterwarnings('ignore', category=ResourceWarning, message='.*unclosed.*')
 
 class WebSocketClient:
     def __init__(self):
@@ -17,6 +23,12 @@ class WebSocketClient:
         self.listening = False
         self.listener_task = None
         self.should_stop = False
+        self._cleanup_registered = False
+        
+        # Register cleanup on exit
+        if not self._cleanup_registered:
+            atexit.register(self._sync_cleanup)
+            self._cleanup_registered = True
         
     async def connect(self, user_id):
         """Connect to the WebSocket server"""
@@ -55,21 +67,91 @@ class WebSocketClient:
         self.listening = False
         
         # Cancel listener task if it exists
-        if self.listener_task:
+        if self.listener_task and not self.listener_task.done():
             self.listener_task.cancel()
             try:
-                await self.listener_task
-            except (asyncio.CancelledError, Exception):
-                pass  # Ignore cancellation errors
+                await asyncio.wait_for(self.listener_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass  # Ignore cancellation and timeout errors
         
+        # Close websocket connection
         if self.websocket:
             try:
-                await self.websocket.close()
-            except Exception:
+                await asyncio.wait_for(self.websocket.close(), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
                 pass  # Ignore errors during close
-            self.websocket = None
-            self.connected = False
-            self.logger.info("Disconnected from WebSocket server")
+            finally:
+                self.websocket = None
+                self.connected = False
+                self.logger.info("Disconnected from WebSocket server")
+    
+    def _sync_cleanup(self):
+        """Synchronous cleanup for atexit"""
+        if self.websocket or self.listener_task:
+            try:
+                # Try to get or create an event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run cleanup
+                if not loop.is_closed():
+                    loop.run_until_complete(self._async_cleanup())
+            except Exception:
+                pass  # Ignore all errors during cleanup
+    
+    async def _async_cleanup(self):
+        """Async cleanup helper"""
+        self.should_stop = True
+        self.listening = False
+        
+        # Cancel listener task
+        if self.listener_task and not self.listener_task.done():
+            self.listener_task.cancel()
+            try:
+                await asyncio.wait_for(self.listener_task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            except Exception:
+                pass
+        
+        # Close websocket connection
+        if self.websocket:
+            try:
+                # Set a timeout for closing
+                close_task = asyncio.create_task(self.websocket.close())
+                await asyncio.wait_for(close_task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # Force close if timeout
+                if self.websocket and hasattr(self.websocket, 'transport'):
+                    try:
+                        self.websocket.transport.close()
+                    except:
+                        pass
+            except Exception:
+                pass
+            finally:
+                self.websocket = None
+        
+        self.connected = False
+        
+        # Cancel any remaining tasks in the current event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if not loop.is_closed():
+                pending = [task for task in asyncio.all_tasks(loop) 
+                          if not task.done() and task != asyncio.current_task()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+        except Exception:
+            pass
     
     async def send_message(self, message):
         """Send a message to the server"""
@@ -120,7 +202,13 @@ class WebSocketClient:
                         
                 except asyncio.TimeoutError:
                     # Timeout is expected, continue listening
+                    if self.should_stop:
+                        break
                     continue
+                except asyncio.CancelledError:
+                    # Task was cancelled, exit gracefully
+                    self.logger.info("Listen task cancelled")
+                    break
                 except json.JSONDecodeError:
                     self.logger.error("Invalid JSON message received")
                 except websockets.exceptions.ConnectionClosed:
@@ -132,8 +220,14 @@ class WebSocketClient:
                         self.connected = False
                         break
                     self.logger.error(f"Error while listening for messages: {e}")
+                    if self.should_stop:
+                        break
                     continue
                     
+        except asyncio.CancelledError:
+            self.logger.info("Listen task cancelled during execution")
+        except Exception as e:
+            self.logger.error(f"Unexpected error in listen loop: {e}")
         finally:
             self.listening = False
             self.should_stop = True

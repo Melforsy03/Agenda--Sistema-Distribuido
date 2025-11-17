@@ -125,15 +125,16 @@ class GroupService:
         return len(invitations) if invitations else 0
 
     async def delete_group(self, group_id, user_id):
-        """Eliminar un grupo completamente (solo líderes)"""
-        # Verificar que el usuario es líder
-        if not self.db.is_group_leader(user_id, group_id):
-            return False, "Solo los líderes pueden eliminar el grupo"
-
-        # Obtener información del grupo antes de eliminarlo
+        """Eliminar un grupo completamente (solo creadores)"""
+        # Obtener información del grupo
         group_info = self.db.get_group_info(group_id)
         if not group_info:
             return False, "Grupo no encontrado"
+
+        # Verificar que el usuario es el creador del grupo
+        creator_id = group_info[4]
+        if creator_id != user_id:
+            return False, "Solo el creador del grupo puede eliminarlo"
 
         group_name = group_info[1]
 

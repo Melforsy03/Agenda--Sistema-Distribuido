@@ -7,7 +7,7 @@ import warnings
 import logging
 from ui.login_view import show_login_page
 from ui.calendar_view import show_calendar_view
-from ui.event_view import show_create_event_view
+from ui.event_view import show_events_view
 from ui.group_view import show_groups_view
 from ui.invitations_view import show_invitations_view
 from ui.notifications_view import show_notifications_view
@@ -231,7 +231,7 @@ def main():
         if 'current_view' in st.session_state:
             requested_view = st.session_state.pop('current_view')
             if requested_view == 'events':
-                default_page = "➕ Crear Evento"
+                default_page = "📋 Eventos"
             else:
                 default_page = "📅 Calendario"
         else:
@@ -240,8 +240,8 @@ def main():
         # Navegación
         page = st.sidebar.radio(
             "Navegación",
-            ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"],
-            index=["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"].index(default_page) if default_page in ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"] else 0
+            ["📅 Calendario", "📋 Eventos", "👥 Grupos", invitations_label, "🔔 Notificaciones"],
+            index=["📅 Calendario", "📋 Eventos", "👥 Grupos", invitations_label, "🔔 Notificaciones"].index(default_page) if default_page in ["📅 Calendario", "📋 Eventos", "👥 Grupos", invitations_label, "🔔 Notificaciones"] else 0
         )
         
         if st.sidebar.button("🚪 Cerrar sesión"):
@@ -279,8 +279,8 @@ def main():
         # Mostrar página seleccionada
         if page == "📅 Calendario":
             show_calendar_view(st.session_state.user_id, api_client, st.session_state.session_token)
-        elif page == "➕ Crear Evento":
-            show_create_event_view(st.session_state.user_id, api_client, st.session_state.session_token)
+        elif page == "📋 Eventos":
+            show_events_view(st.session_state.user_id, api_client, st.session_state.session_token)
         elif page == "👥 Grupos":
             show_groups_view(st.session_state.user_id, api_client, st.session_state.session_token)
         elif page.startswith("📧 Invitaciones"):  # Maneja tanto con badge como sin badge

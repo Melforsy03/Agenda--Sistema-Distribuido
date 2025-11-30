@@ -1,8 +1,8 @@
 # Fdb version 4
-["pdflatex"] 1764524964.2867 "/home/melani/Escritorio/Agenda Disitribuida /Agenda/informe /informe.tex" "informe.pdf" "informe" 1764524965.45398 0
+["pdflatex"] 1764525442.5139 "/home/melani/Escritorio/Agenda Disitribuida /Agenda/informe /informe.tex" "informe.pdf" "informe" 1764525444.75343 0
   "/etc/texmf/web2c/texmf.cnf" 1763621265.02343 475 c0e671620eb5563b2130f56340a5fde8 ""
   "/home/melani/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1200.600pk" 1764503531.79931 14040 ff103d94f4b2dcb91a398636499ffa4b ""
-  "/home/melani/Escritorio/Agenda Disitribuida /Agenda/informe /informe.tex" 1764524962.84456 18945 4056c5cbcb6542d3994195a17129e451 ""
+  "/home/melani/Escritorio/Agenda Disitribuida /Agenda/informe /informe.tex" 1764525441.90466 18941 a49216ec66d981efe9c0ee36fd43381e ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/adobe/times/ptmb7t.tfm" 1136768653 2172 fd0c924230362ff848a33632ed45dc23 ""
@@ -167,10 +167,10 @@
   "/usr/share/texmf/web2c/texmf.cnf" 1707919699 40399 f2c302f7d2af602abb742093540a5834 ""
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1763621556.46873 165012 f177baa1c39a3ebd62c3096a43521a0d ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1763621564 6852608 dd42b18b821e3f3caa8af18dd51fdbda ""
-  "informe.aux" 1764524965.36658 6285 7e1d443332d7eae6ba9eb7e6bc22e058 "pdflatex"
-  "informe.out" 1764524965.36858 6731 6398ce60523884dee5cdd0c48a8750e4 "pdflatex"
-  "informe.tex" 1764524962.84456 18945 4056c5cbcb6542d3994195a17129e451 ""
-  "informe.toc" 1764524965.36958 2982 7558645b4a00e579eb7c7701d7d80a89 "pdflatex"
+  "informe.aux" 1764525444.49768 6286 b6b04b5aaac9d916bf19abe2a5317b8c "pdflatex"
+  "informe.out" 1764525444.49968 6731 6398ce60523884dee5cdd0c48a8750e4 "pdflatex"
+  "informe.tex" 1764525441.90466 18941 a49216ec66d981efe9c0ee36fd43381e ""
+  "informe.toc" 1764525444.50068 2983 f9b569a2f5b6ef8df7ac58bac58147c4 "pdflatex"
   (generated)
   "informe.aux"
   "informe.log"

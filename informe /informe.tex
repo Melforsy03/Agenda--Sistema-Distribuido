@@ -31,8 +31,8 @@
 {\color{primary}\normalfont\large\bfseries}{\thesection}{1em}{}
 
 % Título
-\title{\textbf{Informe del Sistema Distribuido: Arquitectura RAFT con Sharding y WebSockets}}
-\author{Equipo RAFT}
+\title{\textbf{Informe de Agenda Distribuido: Arquitectura RAFT con Sharding y WebSockets}}
+
 \date{\today}
 
 \begin{document}
@@ -296,20 +296,20 @@ Cuando el nodo líder recibe una operación:
 
 \subsection{Cómo se Dividen los Datos}
 
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
 \small
-\begin{tabular}{p{3cm} p{3cm} p{5cm}}
+\begin{tabular}{p{2.5cm} p{3cm} p{4.5cm}}
 \toprule
-\textbf{Usuario} & \textbf{Shard Destino} & \textbf{Ejemplo} \\
+\textbf{Usuario/Grupo} & \textbf{Shard Destino} & \textbf{Ejemplo} \\
 \midrule
 alice & Eventos A-M & Eventos de Alice van al Shard 1 \\
 bob & Eventos N-Z & Eventos de Bob van al Shard 2 \\
 charlie & Eventos A-M & Eventos de Charlie van al Shard 1 \\
 david & Eventos N-Z & Eventos de David van al Shard 2 \\
 \midrule
-Grupos & Shard Grupos & Todos los grupos van al Shard 3 \\
-Usuarios & Shard Usuarios & Todos los usuarios van al Shard 4 \\
+Todos los Grupos & Shard Grupos & Todos los grupos van al Shard 3 \\
+Todos los Usuarios & Shard Usuarios & Todos los usuarios van al Shard 4 \\
 \bottomrule
 \end{tabular}
 \caption{Distribución de datos entre shards especializados}
@@ -319,17 +319,17 @@ Usuarios & Shard Usuarios & Todos los usuarios van al Shard 4 \\
 \subsection{Configuración de Nodos y Topología Física}
 
 \subsubsection{Topología con 4 Servidores Físicos}
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
 \small
-\begin{tabular}{p{2.5cm} p{9cm}}
+\begin{tabular}{p{2.8cm} p{8.2cm}}
 \toprule
 \textbf{Servidor} & \textbf{Nodos Alojados} \\
 \midrule
-Servidor 1 & [Shard1-node1, Shard2-node4, Shard3-node7, Shard4-node10] \\
-Servidor 2 & [Shard1-node4, Shard2-node1, Shard3-node4, Shard4-node7] \\
-Servidor 3 & [Shard1-node7, Shard2-node7, Shard3-node1, Shard4-node4] \\
-Servidor 4 & [Shard1-node10, Shard2-node10, Shard3-node10, Shard4-node1] \\
+Servidor 1 & Shard1-node1, Shard2-node4, Shard3-node7, Shard4-node10 \\
+Servidor 2 & Shard1-node4, Shard2-node1, Shard3-node4, Shard4-node7 \\
+Servidor 3 & Shard1-node7, Shard2-node7, Shard3-node1, Shard4-node4 \\
+Servidor 4 & Shard1-node10, Shard2-node10, Shard3-node10, Shard4-node1 \\
 \bottomrule
 \end{tabular}
 \caption{Distribución de nodos RAFT en servidores físicos para alta disponibilidad}

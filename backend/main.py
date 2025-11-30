@@ -3,15 +3,19 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
+import sys
 import os
 
-# Fix imports for the new directory structure
-from database.repository import Database
-from services.websocket_server import start_websocket_server
-from services.auth_service import AuthService
-from services.group_service import GroupService
-from services.event_service import EventService
-from services.session_manager import SessionManager
+# Agregar el directorio raíz al path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Importaciones CORREGIDAS
+from backend.database.repository import Database
+from backend.services.auth_service import AuthService
+from backend.services.group_service import GroupService
+from backend.services.event_service import EventService
+from backend.services.session_manager import SessionManager
+from backend.services.websocket_server import start_websocket_server
 
 app = FastAPI(title="Agenda Distribuida API", version="1.0.0")
 

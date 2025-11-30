@@ -1,0 +1,14 @@
+\contentsline {section}{\numberline {1}Arquitectura del Sistema}{2}{section.1}%
+\contentsline {section}{\numberline {2}Organización del Sistema Distribuido}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Detalle de los Shards}{2}{subsection.2.1}%
+\contentsline {section}{\numberline {3}Roles del Sistema}{2}{section.3}%
+\contentsline {section}{\numberline {4}Distribución de Servicios en Docker}{3}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Redes Docker}{3}{subsection.4.1}%
+\contentsline {section}{\numberline {5}Procesos del Sistema}{3}{section.5}%
+\contentsline {section}{\numberline {6}Comunicación en el Sistema}{4}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Flujo de Comunicación}{4}{subsection.6.1}%
+\contentsline {section}{\numberline {7}Coordinación del Sistema}{4}{section.7}%
+\contentsline {section}{\numberline {8}Tolerancia a Fallos}{4}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Mecanismo de Failover}{5}{subsection.8.1}%
+\contentsline {section}{\numberline {9}Seguridad}{5}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Medidas de Seguridad Implementadas}{5}{subsection.9.1}%

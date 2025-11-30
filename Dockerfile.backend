@@ -1,25 +1,27 @@
-# =========================
-# Dockerfile.backend
-# =========================
 FROM python:3.10-slim
 
-# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar todo el proyecto
+# Actualizar pip primero
+RUN pip install --upgrade pip
+
 COPY . .
 
-# Instalar dependencias principales
-RUN pip install --no-cache-dir fastapi uvicorn aiohttp httpx pydantic sqlite3 websockets
+# Estrategia de instalación por capas para evitar conflictos
+RUN pip install --no-cache-dir \
+    click>=8.0 \
+    websockets>=11.0 \
+    typing-extensions>=4.8.0
 
-# Asegurar que Python vea la carpeta raíz como módulo
+# Instalar TODAS las dependencias que puedan necesitar los diferentes servicios
+RUN pip install --no-cache-dir --timeout 300 \
+    -r backend/requirements.txt \
+    aiohttp>=3.8.0 \
+    httpx>=0.24.0
+
 ENV PYTHONPATH=/app
 
-# Exponer los puertos (API, WS, RAFT, Coordinator)
-EXPOSE 8766 8767 8700 8801 8802 8803 8804
 
-# Variables de entorno básicas
-ENV DOCKER_ENV=true
+EXPOSE 8766
 
-# Comando por defecto (puedes cambiarlo al coordinador o al backend principal)
-CMD ["python", "backend/main.py"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8766"]

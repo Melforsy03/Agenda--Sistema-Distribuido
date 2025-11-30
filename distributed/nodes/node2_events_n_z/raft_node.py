@@ -2,12 +2,13 @@ from fastapi import FastAPI, Request
 import sqlite3, os, asyncio
 from shared.raft import RaftNode
 
+
 SHARD_NAME = "EVENTOS N-Z"
-NODE_ID = "node2"
-PORT = 8802
+NODE_ID = "node4"
+PORT = 8804
 PEERS = [
-    "http://localhost:8801",
-    "http://localhost:8803"
+    "http://localhost:8805",  # node5
+    "http://localhost:8806"   # node6
 ]
 
 app = FastAPI(title=f"Shard {SHARD_NAME} - {NODE_ID}")

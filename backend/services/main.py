@@ -6,7 +6,7 @@ from typing import Optional, List
 import os
 
 # Fix imports for the new directory structure
-from database.repository import Database
+from backend.database.repository import Database
 from services.websocket_server import start_websocket_server
 from services.auth_service import AuthService
 from services.group_service import GroupService

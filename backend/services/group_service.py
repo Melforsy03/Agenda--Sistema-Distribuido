@@ -1,5 +1,5 @@
-from database.repository import Database
-from services.websocket_manager import websocket_manager
+from backend.database.repository import Database
+from .websocket_manager import websocket_manager
 import asyncio
 
 class GroupService:

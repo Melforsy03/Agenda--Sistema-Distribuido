@@ -52,10 +52,19 @@ function ensure_swarm() {
 
 function ensure_network() {
   if ! docker network ls | grep -q "$NETWORK_NAME"; then
-    log "🌐 Creando red overlay $NETWORK_NAME..."
-    docker network create --driver overlay $NETWORK_NAME
+    log "🌐 Creando red overlay $NETWORK_NAME (attachable)..."
+    docker network create --driver overlay --attachable $NETWORK_NAME
+    return
+  fi
+
+  # Asegura que la red sea attachable para permitir docker run en Swarm
+  is_attachable=$(docker network inspect "$NETWORK_NAME" --format '{{.Attachable}}' 2>/dev/null || echo "false")
+  if [ "$is_attachable" != "true" ]; then
+    log "♻️  Recreando red $NETWORK_NAME como attachable..."
+    docker network rm "$NETWORK_NAME" >/dev/null 2>&1 || true
+    docker network create --driver overlay --attachable $NETWORK_NAME
   else
-    log "✅ Red $NETWORK_NAME ya existe."
+    log "✅ Red $NETWORK_NAME ya existe y es attachable."
   fi
 }
 
@@ -236,6 +245,7 @@ else
     -p ${FRONTEND_PORT}:${FRONTEND_PORT} \
     -e PYTHONPATH=/app \
     -e API_URL=http://backend:${BACKEND_PORT_API} \
+    -e API_BASE_URL=http://backend:${BACKEND_PORT_API} \
     -e WEBSOCKET_HOST=backend \
     -e WEBSOCKET_PORT=${BACKEND_PORT_WS} \
     $FRONTEND_IMAGE

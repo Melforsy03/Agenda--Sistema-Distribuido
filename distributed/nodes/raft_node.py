@@ -3,6 +3,7 @@ import sqlite3
 import os
 import asyncio
 import logging
+import json
 from shared.raft import RaftNode
 
 # Configuración desde variables de entorno
@@ -10,6 +11,8 @@ SHARD_NAME = os.getenv("SHARD_NAME", "DEFAULT_SHARD")
 NODE_ID = os.getenv("NODE_ID", "node0")
 PORT = int(os.getenv("PORT", "8800"))
 PEERS = [peer.strip() for peer in os.getenv("PEERS", "").split(",") if peer.strip()]
+NODE_URL = os.getenv("NODE_URL", f"http://localhost:{PORT}")
+REPLICATION_FACTOR = int(os.getenv("REPLICATION_FACTOR", "0") or 0)
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -75,12 +78,65 @@ else:
 
 # Motor RAFT
 logger.info(f"🔄 Inicializando nodo RAFT {NODE_ID} con peers: {PEERS}")
+async def apply_log_entry(entry):
+    """
+    Aplica una entrada RAFT al almacén local.
+    Formato esperado en entry.command: JSON con {"type": "...", "payload": {...}}
+    Entradas legacy en texto plano se ignoran.
+    """
+    try:
+        data = json.loads(entry.command)
+    except Exception:
+        logger.warning(f"[{NODE_ID}] Entrada legacy/inesperada, se omite: {entry.command}")
+        return
+
+    cmd_type = data.get("type")
+    payload = data.get("payload", {})
+
+    if cmd_type == "CREATE_EVENT" and "EVENTOS" in SHARD_NAME:
+        cursor.execute("""
+            INSERT INTO events (title, description, creator, start_time, end_time)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            payload.get("title"),
+            payload.get("description"),
+            payload.get("creator"),
+            payload.get("start_time"),
+            payload.get("end_time")
+        ))
+        conn.commit()
+    elif cmd_type == "CREATE_GROUP" and "GRUPOS" in SHARD_NAME:
+        cursor.execute(
+            "INSERT INTO groups (name, description, creator) VALUES (?, ?, ?)",
+            (
+                payload.get("name"),
+                payload.get("description"),
+                payload.get("creator", "system")
+            )
+        )
+        conn.commit()
+    elif cmd_type == "CREATE_USER" and "USUARIOS" in SHARD_NAME:
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, email) VALUES (?, ?)", 
+                (payload.get("username"), payload.get("email"))
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            # Usuario/email duplicado: no es fatal
+            logger.info(f"[{NODE_ID}] Usuario/email duplicado, se omite aplicar: {payload}")
+    else:
+        logger.warning(f"[{NODE_ID}] Tipo de comando desconocido: {cmd_type}")
+
 raft = RaftNode(
     node_id=NODE_ID, 
     peers=PEERS, 
     state_file=f"data/{NODE_ID}_state.json",
     heartbeat_interval=1.0,
-    election_timeout_range=(2.0, 4.0)
+    election_timeout_range=(2.0, 4.0),
+    state_machine_callback=apply_log_entry,
+    self_url=NODE_URL,
+    replication_factor=REPLICATION_FACTOR or None,
 )
 
 @app.on_event("startup")
@@ -99,8 +155,9 @@ if "EVENTOS" in SHARD_NAME:
         if not raft.is_leader():
             return {"error": "No soy el líder", "leader": raft.leader_id}
 
-        # Crear entrada de log
-        entry = raft.append_log(f"CREATE_EVENT:{event['title']}")
+        # Crear entrada de log (payload completo)
+        cmd = json.dumps({"type": "CREATE_EVENT", "payload": event})
+        entry = raft.append_log(cmd)
 
         # Replicar a seguidores
         replicated = await raft.replicate_log(entry)
@@ -108,13 +165,10 @@ if "EVENTOS" in SHARD_NAME:
         if not replicated:
             return {"error": "No se pudo replicar el evento en la mayoría de nodos"}
 
-        # Aplicar a la base de datos
-        cursor.execute("""
-            INSERT INTO events (title, description, creator, start_time, end_time)
-            VALUES (?, ?, ?, ?, ?)
-        """, (event["title"], event["description"], event["creator"], 
-              event["start_time"], event["end_time"]))
-        conn.commit()
+        # Aplicar inmediatamente en el líder y marcar progreso
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
 
         return {
             "status": "ok", 
@@ -140,17 +194,16 @@ elif "GRUPOS" in SHARD_NAME:
         if not raft.is_leader():
             return {"error": "No soy el líder", "leader": raft.leader_id}
 
-        entry = raft.append_log(f"CREATE_GROUP:{group['name']}")
+        cmd = json.dumps({"type": "CREATE_GROUP", "payload": group})
+        entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)
 
         if not replicated:
             return {"error": "No se pudo replicar el grupo en la mayoría de nodos"}
 
-        cursor.execute(
-            "INSERT INTO groups (name, description, creator) VALUES (?, ?, ?)", 
-            (group["name"], group["description"], group.get("creator", "system"))
-        )
-        conn.commit()
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
 
         return {
             "status": "ok", 
@@ -174,20 +227,16 @@ elif "USUARIOS" in SHARD_NAME:
         if not raft.is_leader():
             return {"error": "No soy el líder", "leader": raft.leader_id}
 
-        entry = raft.append_log(f"CREATE_USER:{user['username']}")
+        cmd = json.dumps({"type": "CREATE_USER", "payload": user})
+        entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)
 
         if not replicated:
             return {"error": "No se pudo replicar el usuario en la mayoría de nodos"}
 
-        try:
-            cursor.execute(
-                "INSERT INTO users (username, email) VALUES (?, ?)", 
-                (user["username"], user["email"])
-            )
-            conn.commit()
-        except sqlite3.IntegrityError:
-            return {"error": "Usuario o email ya existen"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
 
         return {
             "status": "ok", 
@@ -246,10 +295,41 @@ async def heartbeat(req: Request):
     await raft.receive_heartbeat(data["term"], data["leader_id"])
     return {"status": "ok"}
 
+# Bully election endpoints
+@app.post("/raft/bully/challenge")
+async def bully_challenge(req: Request):
+    data = await req.json()
+    return await raft.handle_bully_challenge(
+        data.get("candidate_id", ""),
+        data.get("candidate_url", ""),
+        data.get("priority", 0)
+    )
+
+@app.post("/raft/bully/victory")
+async def bully_victory(req: Request):
+    data = await req.json()
+    return await raft.handle_bully_victory(
+        data.get("leader_id", ""),
+        data.get("leader_url", ""),
+        data.get("priority", 0)
+    )
+
 @app.get("/raft/sync")
 def sync_log(follower: str):
     """Devuelve entradas del log al seguidor que se reconecta"""
     return {"missing_entries": [e.to_dict() for e in raft.log]}
+
+@app.get("/raft/log/summary")
+def log_summary():
+    last_index = len(raft.log)
+    last_term = raft.log[-1].term if raft.log else 0
+    return {
+        "last_index": last_index,
+        "last_term": last_term,
+        "commit_index": raft.commit_index,
+        "node_id": NODE_ID,
+        "role": raft.role.value if hasattr(raft.role, 'value') else str(raft.role)
+    }
 
 @app.get("/health")
 async def health():

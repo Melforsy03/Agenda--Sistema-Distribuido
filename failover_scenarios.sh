@@ -10,7 +10,7 @@ BACKEND_CONTAINER=${BACKEND_CONTAINER:-backend}
 COORDINATOR_CONTAINER=${COORDINATOR_CONTAINER:-coordinator}
 FRONTEND_CONTAINER=${FRONTEND_CONTAINER:-frontend}
 # Forzamos RAFT_NODES a un array aunque venga como string con espacios o con comillas.
-RAFT_NODES_STRING=${RAFT_NODES:-"raft_node1 raft_node2 raft_node3 raft_node4 raft_node5 raft_node6 raft_node7 raft_node8 raft_node9 raft_node10 raft_node11 raft_node12"}
+RAFT_NODES_STRING=${RAFT_NODES:-"raft_events_am_1 raft_events_am_2 raft_events_am_3 raft_events_nz_1 raft_events_nz_2 raft_events_nz_3 raft_groups_1 raft_groups_2 raft_groups_3 raft_users_1 raft_users_2 raft_users_3"}
 IFS=' ' read -r -a RAFT_NODES <<< "$RAFT_NODES_STRING"
 SLEEP_BETWEEN=${SLEEP_BETWEEN:-6}
 SLEEP_MAJOR=${SLEEP_MAJOR:-12}
@@ -81,7 +81,7 @@ reconnect_net() {
 
 scenario_restart_one_per_shard() {
   log "Escenario 1: reinicio de un nodo en cada shard (pierde lider si coincide)."
-  for node in raft_node1 raft_node4 raft_node7 raft_node10; do
+  for node in raft_events_am_1 raft_events_nz_1 raft_groups_1 raft_users_1; do
     kill_hard "$node"
     sleep "$SLEEP_BETWEEN"
     start_up "$node"
@@ -91,7 +91,7 @@ scenario_restart_one_per_shard() {
 
 scenario_loss_of_majority() {
   log "Escenario 2: perdida de mayoria en un shard (dos nodos abajo)."
-  local shard_nodes=(raft_node1 raft_node2 raft_node3)
+  local shard_nodes=(raft_events_am_1 raft_events_am_2 raft_events_am_3)
   for node in "${shard_nodes[@]:0:2}"; do
     kill_hard "$node"
   done

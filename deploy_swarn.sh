@@ -110,29 +110,37 @@ function get_shard_config() {
 
 function get_peers_for_node() {
   local node_id=$1
-  local shard=$(get_shard_config $node_id)
-  
-  case $shard in
-    "EVENTOS_A_M")
-      if [ $node_id -eq 1 ]; then echo "raft_node2,raft_node3"; fi
-      if [ $node_id -eq 2 ]; then echo "raft_node1,raft_node3"; fi
-      if [ $node_id -eq 3 ]; then echo "raft_node1,raft_node2"; fi
-      ;;
-    "EVENTOS_N_Z")
-      if [ $node_id -eq 4 ]; then echo "raft_node5,raft_node6"; fi
-      if [ $node_id -eq 5 ]; then echo "raft_node4,raft_node6"; fi
-      if [ $node_id -eq 6 ]; then echo "raft_node4,raft_node5"; fi
-      ;;
-    "GRUPOS")
-      if [ $node_id -eq 7 ]; then echo "raft_node8,raft_node9"; fi
-      if [ $node_id -eq 8 ]; then echo "raft_node7,raft_node9"; fi
-      if [ $node_id -eq 9 ]; then echo "raft_node7,raft_node8"; fi
-      ;;
-    "USUARIOS")
-      if [ $node_id -eq 10 ]; then echo "raft_node11,raft_node12"; fi
-      if [ $node_id -eq 11 ]; then echo "raft_node10,raft_node12"; fi
-      if [ $node_id -eq 12 ]; then echo "raft_node10,raft_node11"; fi
-      ;;
+  case $node_id in
+    1) echo "http://raft_events_am_2:8802,http://raft_events_am_3:8803" ;;
+    2) echo "http://raft_events_am_1:8801,http://raft_events_am_3:8803" ;;
+    3) echo "http://raft_events_am_1:8801,http://raft_events_am_2:8802" ;;
+    4) echo "http://raft_events_nz_2:8805,http://raft_events_nz_3:8806" ;;
+    5) echo "http://raft_events_nz_1:8804,http://raft_events_nz_3:8806" ;;
+    6) echo "http://raft_events_nz_1:8804,http://raft_events_nz_2:8805" ;;
+    7) echo "http://raft_groups_2:8808,http://raft_groups_3:8809" ;;
+    8) echo "http://raft_groups_1:8807,http://raft_groups_3:8809" ;;
+    9) echo "http://raft_groups_1:8807,http://raft_groups_2:8808" ;;
+    10) echo "http://raft_users_2:8811,http://raft_users_3:8812" ;;
+    11) echo "http://raft_users_1:8810,http://raft_users_3:8812" ;;
+    12) echo "http://raft_users_1:8810,http://raft_users_2:8811" ;;
+  esac
+}
+
+function get_node_name() {
+  local node_id=$1
+  case $node_id in
+    1) echo "raft_events_am_1" ;;
+    2) echo "raft_events_am_2" ;;
+    3) echo "raft_events_am_3" ;;
+    4) echo "raft_events_nz_1" ;;
+    5) echo "raft_events_nz_2" ;;
+    6) echo "raft_events_nz_3" ;;
+    7) echo "raft_groups_1" ;;
+    8) echo "raft_groups_2" ;;
+    9) echo "raft_groups_3" ;;
+    10) echo "raft_users_1" ;;
+    11) echo "raft_users_2" ;;
+    12) echo "raft_users_3" ;;
   esac
 }
 
@@ -203,8 +211,8 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
     port=${RAFT_PORTS[$((i-1))]}
     shard=$(get_shard_config $i)
     peers=$(get_peers_for_node $i)
-    node_name="raft_node$i"
-    
+    node_name=$(get_node_name $i)
+
     log "🔄 Iniciando $node_name (Shard: $shard, Puerto: $port)"
     
     docker run -d \
@@ -226,10 +234,10 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
   done
 
   log "✅ Todos los nodos RAFT desplegados:"
-  log "   - Shard EVENTOS A-M: raft_node1, raft_node2, raft_node3"
-  log "   - Shard EVENTOS N-Z: raft_node4, raft_node5, raft_node6"  
-  log "   - Shard GRUPOS:      raft_node7, raft_node8, raft_node9"
-  log "   - Shard USUARIOS:    raft_node10, raft_node11, raft_node12"
+  log "   - Shard EVENTOS A-M: raft_events_am_1, raft_events_am_2, raft_events_am_3"
+  log "   - Shard EVENTOS N-Z: raft_events_nz_1, raft_events_nz_2, raft_events_nz_3"
+  log "   - Shard GRUPOS:      raft_groups_1, raft_groups_2, raft_groups_3"
+  log "   - Shard USUARIOS:    raft_users_1, raft_users_2, raft_users_3"
 
 else
   log "🎨 Desplegando frontend en $HOSTNAME (worker)..."

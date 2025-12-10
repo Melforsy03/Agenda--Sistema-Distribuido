@@ -4,6 +4,7 @@ import httpx
 import asyncio
 import logging
 import os
+import json
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -12,12 +13,12 @@ logger = logging.getLogger("coordinator")
 app = FastAPI(title="Coordinador RAFT - Docker Swarm", version="3.0")
 
 # =========================================================
-# 🌐 CONFIGURACIÓN PARA DOCKER SWARM
+# 🌐 CONFIGURACIÓN DE SHARDS (dinámica para escalar)
 # =========================================================
-SHARDS = {
+DEFAULT_SHARDS = {
     "events_a_m": [
         "http://raft_events_am_1:8801",
-        "http://raft_events_am_2:8802",  
+        "http://raft_events_am_2:8802",
         "http://raft_events_am_3:8803",
     ],
     "events_n_z": [
@@ -34,8 +35,56 @@ SHARDS = {
         "http://raft_users_1:8810",
         "http://raft_users_2:8811",
         "http://raft_users_3:8812",
-    ]
+    ],
 }
+
+
+def _parse_nodes(raw: str):
+    """Convierte una lista separada por comas en URLs limpias."""
+    return [node.strip() for node in raw.split(",") if node.strip()]
+
+
+def load_shards_from_env() -> dict:
+    """Permite definir shards y nodos vía variables de entorno para escalar sin tocar código.
+
+    Prioridad:
+    1) SHARDS_CONFIG_JSON = '{"events_a_m":["http://...","http://..."], ...}'
+    2) Variables SHARD_EVENTS_A_M, SHARD_EVENTS_N_Z, SHARD_GROUPS, SHARD_USERS (coma separadas)
+    3) DEFAULT_SHARDS hardcodeado
+    """
+    # Opción 1: JSON completo
+    cfg_json = os.getenv("SHARDS_CONFIG_JSON")
+    if cfg_json:
+        try:
+            data = json.loads(cfg_json)
+            shards = {k: _parse_nodes(",".join(v)) if isinstance(v, list) else _parse_nodes(str(v)) for k, v in data.items()}
+            return {k: v for k, v in shards.items() if v}
+        except Exception as e:
+            logger.warning(f"No pude parsear SHARDS_CONFIG_JSON, uso defaults: {e}")
+
+    # Opción 2: variables por shard
+    env_overrides = {
+        "events_a_m": os.getenv("SHARD_EVENTS_A_M"),
+        "events_n_z": os.getenv("SHARD_EVENTS_N_Z"),
+        "groups": os.getenv("SHARD_GROUPS"),
+        "users": os.getenv("SHARD_USERS"),
+    }
+    shards = {}
+    for shard, raw in env_overrides.items():
+        if raw:
+            nodes = _parse_nodes(raw)
+            if nodes:
+                shards[shard] = nodes
+
+    # Completar con defaults cuando no hay override
+    for shard, nodes in DEFAULT_SHARDS.items():
+        shards.setdefault(shard, nodes)
+
+    return shards
+
+
+SHARDS = load_shards_from_env()
+NODES_PER_SHARD = {k: len(v) for k, v in SHARDS.items()}
 
 # Cache local de líderes detectados
 LEADER_CACHE = {}
@@ -247,6 +296,7 @@ async def health_check():
         "status": "healthy",
         "service": "coordinator",
         "total_shards": len(SHARDS),
+        "nodes_per_shard": NODES_PER_SHARD,
         "timestamp": asyncio.get_event_loop().time()
     }
 
@@ -278,8 +328,8 @@ def root():
     return {
         "message": "🧭 Coordinador RAFT - Docker Swarm", 
         "total_shards": len(SHARDS),
-        "nodes_per_shard": 3,
-        "tolerance": "Puede fallar 1 nodo por shard",
+        "nodes_per_shard": NODES_PER_SHARD,
+        "tolerance": "Depende de quórum; a más réplicas, más fallos tolerados",
         "endpoints": {
             "create_event": "POST /events",
             "create_group": "POST /groups", 

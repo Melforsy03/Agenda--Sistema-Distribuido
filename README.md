@@ -154,3 +154,25 @@ docker start raft_events_am_1
 - Quorum dinámico: líder puede degradar quorum si hay menos peers vivos (más disponibilidad, menor garantía temporal).  
 - Rejoin seguro: nodos que vuelven se curan con AppendEntries o `/raft/sync`.  
 - Persistencia: monta volúmenes en `data/` si quieres durabilidad entre reinicios.  
+
+///////////////////////////////////////////////////////////////
+### Agregar y tumbar el nodo 
+Tumbar un nodo (ejemplos)
+
+Parar sin borrar datos: docker stop raft_events_am_1
+Arrancar de nuevo: docker start raft_events_am_1
+Borrado forzado (para recrearlo limpio):
+docker rm -f raft_events_am_1
+Luego lo recreas con el mismo docker run que usaste inicialmente.
+Agregar un nodo (con autoregistro al coordinador)
+Ejemplo para un cuarto nodo en el shard A‑M, con autoregistro:
+ ```bash
+docker run -d --name raft_events_am_4 \
+  -e SHARD_NAME=EVENTOS_A_M \
+  -e NODE_ID=http://raft_events_am_4:8813 \
+  -e NODE_URL=http://raft_events_am_4:8813 \
+  -e PORT=8813 \
+  -e PEERS=http://raft_events_am_1:8801,http://raft_events_am_2:8802,http://raft_events_am_3:8803 \
+  -e COORD_URL=http://coordinator:80 \
+  -p 8813:8813 agenda-raft-node:latest
+   ```

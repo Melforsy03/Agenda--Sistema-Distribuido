@@ -88,6 +88,35 @@ NODES_PER_SHARD = {k: len(v) for k, v in SHARDS.items()}
 
 # Cache local de líderes detectados
 LEADER_CACHE = {}
+NODES_PER_SHARD = {k: len(v) for k, v in SHARDS.items()}
+
+# =========================================================
+# 🔧 Helpers para modificar shards en caliente
+# =========================================================
+
+def set_shard_nodes(shard: str, nodes: list[str]):
+    """Actualiza nodos de un shard en memoria y limpia caché de líder."""
+    SHARDS[shard] = nodes
+    NODES_PER_SHARD[shard] = len(nodes)
+    LEADER_CACHE.pop(shard, None)
+
+def add_node_to_shard(shard: str, node_url: str):
+    nodes = SHARDS.get(shard, [])
+    if node_url not in nodes:
+        nodes.append(node_url)
+        set_shard_nodes(shard, nodes)
+
+def replace_node_in_shard(shard: str, old_url: str, new_url: str):
+    nodes = SHARDS.get(shard, [])
+    updated = []
+    for n in nodes:
+        if n == old_url:
+            updated.append(new_url)
+        else:
+            updated.append(n)
+    if new_url not in updated:
+        updated.append(new_url)
+    set_shard_nodes(shard, updated)
 
 # =========================================================
 # 🧠 Funciones auxiliares
@@ -322,6 +351,27 @@ async def cluster_status():
         "shards": shard_status,
         "total_nodes": sum(len(nodes) for nodes in SHARDS.values())
     }
+
+@app.post("/admin/shards/add")
+async def admin_add_node(data: dict):
+    """Agrega un nodo a un shard en caliente (actualiza en memoria y limpia caché)."""
+    shard = data.get("shard")
+    node_url = data.get("node_url")
+    if not shard or not node_url:
+        raise HTTPException(status_code=400, detail="Se requiere shard y node_url")
+    add_node_to_shard(shard, node_url)
+    return {"status": "ok", "shards": SHARDS}
+
+@app.post("/admin/shards/replace")
+async def admin_replace_node(data: dict):
+    """Reemplaza un nodo en un shard en caliente."""
+    shard = data.get("shard")
+    old_url = data.get("old_url")
+    new_url = data.get("new_url")
+    if not shard or not old_url or not new_url:
+        raise HTTPException(status_code=400, detail="Se requiere shard, old_url y new_url")
+    replace_node_in_shard(shard, old_url, new_url)
+    return {"status": "ok", "shards": SHARDS}
 
 @app.get("/")
 def root():

@@ -72,6 +72,7 @@ Nodos RAFT:
 - `NODE_ID`, `NODE_URL`, `PORT`  
 - `PEERS` (URLs de los demás nodos del shard, separados por coma)  
 - `REPLICATION_FACTOR` (opcional; cuántos seguidores empujar activamente, <= total de nodos)  
+- `COORD_URL` (opcional): si se define, el nodo se autorregistra en el coordinador (`/admin/shards/add`) al arrancar, sin intervención manual.
 
 ## Endpoints clave
 - **Coordinador** (`distributed/coordinator/router.py`):  

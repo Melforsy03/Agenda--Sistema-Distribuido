@@ -4,15 +4,16 @@ import os
 import asyncio
 import logging
 import json
+import httpx
 from shared.raft import RaftNode
 
-# Configuración desde variables de entorno
 SHARD_NAME = os.getenv("SHARD_NAME", "DEFAULT_SHARD")
 NODE_ID = os.getenv("NODE_ID", "node0")
 PORT = int(os.getenv("PORT", "8800"))
 PEERS = [peer.strip() for peer in os.getenv("PEERS", "").split(",") if peer.strip()]
 NODE_URL = os.getenv("NODE_URL", f"http://localhost:{PORT}")
 REPLICATION_FACTOR = int(os.getenv("REPLICATION_FACTOR", "0") or 0)
+COORD_URL = os.getenv("COORD_URL")  # opcional, para autodescubrimiento en coordinador
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -139,11 +140,31 @@ raft = RaftNode(
     replication_factor=REPLICATION_FACTOR or None,
 )
 
+async def register_in_coordinator():
+    """Registra este nodo en el coordinador si COORD_URL está definido."""
+    if not COORD_URL:
+        return
+    payload = {"shard": SHARD_NAME.lower(), "node_url": NODE_URL}
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.post(f"{COORD_URL}/admin/shards/add", json=payload)
+                if resp.status_code == 200:
+                    logger.info(f"📣 Nodo {NODE_ID} registrado en coordinador {COORD_URL}")
+                    return
+                else:
+                    logger.warning(f"No se pudo registrar en coordinador ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Error registrando en coordinador: {e}")
+        await asyncio.sleep(5)
+
 @app.on_event("startup")
 async def startup():
     """Inicia el nodo RAFT al arrancar la aplicación"""
     logger.info(f"🚀 Iniciando nodo {NODE_ID} en puerto {PORT}")
     asyncio.create_task(raft.start())
+    if COORD_URL:
+        asyncio.create_task(register_in_coordinator())
 
 # ====================================================
 # Endpoints de aplicación según el shard

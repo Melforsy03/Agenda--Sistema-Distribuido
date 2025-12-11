@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "8001:8001"  # FastAPI
+      - "8767:8767"  # WebSocket
+    volumes:
+      - server_data:/data
+    environment:
+      - WEBSOCKET_HOST=0.0.0.0
+      - WEBSOCKET_PORT=8767
+    networks:
+      - agenda-network
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    ports:
+      - "8501:8501"  # Streamlit
+    environment:
+      - API_BASE_URL=http://server:8001
+      - WEBSOCKET_HOST=server
+      - WEBSOCKET_PORT=8767
+    depends_on:
+      - server
+    networks:
+      - agenda-network
+
+volumes:
+  server_data:
+
+networks:
+  agenda-network:
+    driver: bridge

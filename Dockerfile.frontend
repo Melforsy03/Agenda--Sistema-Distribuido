@@ -15,11 +15,8 @@ RUN pip install --no-cache-dir \
     --trusted-host pypi.tuna.tsinghua.edu.cn \
     numpy==1.24.3
 
-# Instalar streamlit con mirror alternativo
-RUN pip install --no-cache-dir \
-    -i https://mirrors.aliyun.com/pypi/simple/ \
-    --trusted-host mirrors.aliyun.com \
-    streamlit==1.36.0
+# Instalar streamlit desde PyPI (sin mirrors problematicos)
+RUN pip install --no-cache-dir streamlit==1.36.0
 
 # Instalar el resto
 RUN pip install --no-cache-dir \

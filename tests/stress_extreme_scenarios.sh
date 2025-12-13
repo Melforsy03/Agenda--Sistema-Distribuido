@@ -19,6 +19,7 @@ EVENTS_AM_NODES=("http://localhost:8801" "http://localhost:8802" "http://localho
 EVENTS_NZ_NODES=("http://localhost:8804" "http://localhost:8805" "http://localhost:8806")
 GROUPS_NODES=("http://localhost:8807" "http://localhost:8808" "http://localhost:8809")
 USERS_NODES=("http://localhost:8810" "http://localhost:8811" "http://localhost:8812")
+PYTHONPATH_VALUE="${PYTHONPATH_VALUE:-/app:/app/backend}"
 # Puertos siguientes para nodos nuevos por shard (para no colisionar)
 NEXT_PORT_AM=${NEXT_PORT_AM:-8813}
 NEXT_PORT_NZ=${NEXT_PORT_NZ:-8823}
@@ -288,7 +289,7 @@ replace_node() {
     -e PORT="$port" \
     -e PEERS="$peers_local" \
     -e COORD_URL="$COORD_URL" \
-    -e PYTHONPATH=/app \
+    -e PYTHONPATH="$PYTHONPATH_VALUE" \
     -p "$port":"$port" "$RAFT_IMAGE" \
     uvicorn distributed.nodes.raft_node:app --host 0.0.0.0 --port "$port" >/dev/null
   wait_node_ready "$new_url" "$old_ct" || true

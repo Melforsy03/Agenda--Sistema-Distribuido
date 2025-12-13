@@ -1,4 +1,4 @@
-from backend.database.repository import Database
+from database.repository import Database
 
 class AuthService:
     def __init__(self):

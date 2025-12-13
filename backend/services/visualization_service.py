@@ -1,5 +1,5 @@
-from backend.database.repository import Database
-from .hierarchy_service import HierarchyService
+from database.repository import Database
+from services.hierarchy_service import HierarchyService
 from datetime import datetime, timedelta
 
 class VisualizationService:

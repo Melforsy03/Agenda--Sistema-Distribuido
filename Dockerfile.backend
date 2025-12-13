@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --timeout 300 \
     aiohttp>=3.8.0 \
     httpx>=0.24.0
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/backend
 
 
 EXPOSE 8766

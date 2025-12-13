@@ -18,9 +18,30 @@ class APIClient:
             response = requests.request(method, url, headers=headers, **kwargs)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as e:
+            # Extraer mensaje de error del servidor si existe
+            try:
+                error_detail = response.json().get('detail', str(e))
+            except:
+                error_detail = str(e)
+            
+            # Crear mensajes de error más amigables según el código de estado
+            if response.status_code == 401:
+                raise Exception("Usuario o contraseña incorrectos")
+            elif response.status_code == 400:
+                raise Exception(f"{error_detail}")
+            elif response.status_code == 404:
+                raise Exception("Recurso no encontrado")
+            elif response.status_code == 500:
+                raise Exception("Error en el servidor. Por favor, intenta más tarde")
+            else:
+                raise Exception(f"Error: {error_detail}")
+        except requests.exceptions.ConnectionError:
+            raise Exception("No se pudo conectar al servidor. Verifica que el servidor esté ejecutándose")
+        except requests.exceptions.Timeout:
+            raise Exception("Tiempo de espera agotado. El servidor no responde")
         except requests.exceptions.RequestException as e:
-            print(f"API request failed: {e}")
-            raise
+            raise Exception(f"Error de red: {str(e)}")
     
     # Auth methods
     def register(self, username: str, password: str):

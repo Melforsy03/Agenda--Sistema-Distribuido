@@ -1,23 +1,18 @@
 import asyncio
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, List
-import sys
 import os
 
-# Agregar el directorio raíz al path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Importaciones CORREGIDAS
-from backend.database.repository import Database
-from backend.services.auth_service import AuthService
-from backend.services.group_service import GroupService
-from backend.services.event_service import EventService
-from backend.services.session_manager import SessionManager
-from backend.services.websocket_server import start_websocket_server
-
-app = FastAPI(title="Agenda Distribuida API", version="1.0.0")
+# Fix imports for the new directory structure
+from database.repository import Database
+from services.websocket_server import start_websocket_server
+from services.auth_service import AuthService
+from services.group_service import GroupService
+from services.event_service import EventService
+from services.session_manager import SessionManager
 
 # Inicializar servicios
 auth_service = AuthService()
@@ -73,12 +68,16 @@ def get_current_user(token: str):
         raise HTTPException(status_code=401, detail="Sesión inválida o expirada")
     return session_data["user_id"]
 
-@app.on_event("startup")
-async def startup_event():
-    """Iniciar servidor WebSocket al arrancar la aplicación"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    # Startup
     asyncio.create_task(start_websocket_server())
+    yield
+    # Shutdown
+    pass
 
-# Auth endpoints
+app = FastAPI(title="Agenda Distribuida API", version="1.0.0", lifespan=lifespan)
 @app.post("/auth/register")
 async def register(user: UserRegister):
     success = auth_service.register(user.username, user.password)
@@ -136,7 +135,8 @@ async def get_group_info(group_id: int, token: str):
             "is_hierarchical": bool(group_info[3]),
             "creator_id": group_info[4]
         }
-    raise HTTPException(status_code=404, detail="Grupo no encontrado")
+    else:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
 
 @app.post("/groups/invite")
 async def invite_user(invite: InviteUser, token: str):
@@ -173,7 +173,8 @@ async def update_group(group_id: int, update_data: UpdateGroup, token: str):
     success, message = group_service.update_group(group_id, user_id, update_data.name, update_data.description)
     if success:
         return {"message": message}
-    raise HTTPException(status_code=400, detail=message)
+    else:
+        raise HTTPException(status_code=400, detail=message)
 
 @app.delete("/groups/{group_id}")
 async def delete_group(group_id: int, token: str):
@@ -181,7 +182,8 @@ async def delete_group(group_id: int, token: str):
     success, message = await group_service.delete_group(group_id, user_id)
     if success:
         return {"message": message}
-    raise HTTPException(status_code=400, detail=message)
+    else:
+        raise HTTPException(status_code=400, detail=message)
 
 @app.delete("/groups/{group_id}/members/{member_id}")
 async def remove_member(group_id: int, member_id: int, token: str):
@@ -189,7 +191,8 @@ async def remove_member(group_id: int, member_id: int, token: str):
     success, message = await group_service.remove_member(group_id, user_id, member_id)
     if success:
         return {"message": message}
-    raise HTTPException(status_code=400, detail=message)
+    else:
+        raise HTTPException(status_code=400, detail=message)
 
 # Event endpoints
 @app.post("/events")
@@ -235,30 +238,6 @@ async def get_pending_event_invitations_count(token: str):
     user_id = get_current_user(token)
     count = event_service.get_pending_invitations_count(user_id)
     return {"count": count}
-
-@app.delete("/events/{event_id}")
-async def cancel_event(event_id: int, token: str):
-    user_id = get_current_user(token)
-    success, message = await event_service.cancel_event(event_id, user_id)
-    if success:
-        return {"message": message}
-    raise HTTPException(status_code=400, detail=message)
-
-@app.delete("/events/{event_id}/leave")
-async def leave_event(event_id: int, token: str):
-    user_id = get_current_user(token)
-    success, message = await event_service.leave_event(event_id, user_id)
-    if success:
-        return {"message": message}
-    raise HTTPException(status_code=400, detail=message)
-
-@app.get("/events/{event_id}/details")
-async def get_event_details(event_id: int, token: str):
-    user_id = get_current_user(token)
-    event_details, message = event_service.get_event_details(event_id, user_id)
-    if event_details:
-        return event_details
-    raise HTTPException(status_code=400, detail=message)
 
 @app.get("/")
 async def root():

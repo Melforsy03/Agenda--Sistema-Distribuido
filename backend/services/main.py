@@ -6,12 +6,13 @@ from typing import Optional, List
 import os
 
 # Fix imports for the new directory structure
-from backend.database.repository import Database
+from database.repository import Database
 from services.websocket_server import start_websocket_server
 from services.auth_service import AuthService
 from services.group_service import GroupService
 from services.event_service import EventService
 from services.session_manager import SessionManager
+from services.notification_service import NotificationService
 
 app = FastAPI(title="Agenda Distribuida API", version="1.0.0")
 
@@ -20,6 +21,7 @@ auth_service = AuthService()
 group_service = GroupService()
 event_service = EventService()
 session_manager = SessionManager()
+notification_service = NotificationService()
 
 # Modelos para las solicitudes
 class UserLogin(BaseModel):
@@ -72,8 +74,9 @@ def get_current_user(token: str):
 
 @app.on_event("startup")
 async def startup_event():
-    """Iniciar servidor WebSocket al arrancar la aplicación"""
+    """Iniciar servidor WebSocket y scheduler de recordatorios al arrancar la aplicación"""
     asyncio.create_task(start_websocket_server())
+    asyncio.create_task(notification_service.start_reminder_scheduler())
 
 # Auth endpoints
 @app.post("/auth/register")
@@ -116,6 +119,32 @@ async def list_user_groups(token: str):
     user_id = get_current_user(token)
     return group_service.list_user_groups(user_id)
 
+@app.get("/groups/invitations")
+async def pending_invitations(token: str):
+    user_id = get_current_user(token)
+    return group_service.pending_invitations(user_id)
+
+@app.get("/groups/invitations/count")
+async def get_pending_invitations_count(token: str):
+    user_id = get_current_user(token)
+    count = group_service.get_pending_invitations_count(user_id)
+    return {"count": count}
+
+@app.get("/groups/{group_id}/info")
+async def get_group_info(group_id: int, token: str):
+    get_current_user(token)
+    group_info = group_service.get_group_info(group_id)
+    if group_info:
+        return {
+            "id": group_info[0],
+            "name": group_info[1],
+            "description": group_info[2],
+            "is_hierarchical": group_info[3],
+            "creator_id": group_info[4]
+        }
+    else:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+
 @app.get("/groups/{group_id}/members")
 async def list_group_members(group_id: int, token: str):
     get_current_user(token)
@@ -130,11 +159,6 @@ async def invite_user(invite: InviteUser, token: str):
     else:
         raise HTTPException(status_code=400, detail=message)
 
-@app.get("/groups/invitations")
-async def pending_invitations(token: str):
-    user_id = get_current_user(token)
-    return group_service.pending_invitations(user_id)
-
 @app.post("/groups/invitations/respond")
 async def respond_invitation(response: RespondInvitation, token: str):
     user_id = get_current_user(token)
@@ -143,12 +167,6 @@ async def respond_invitation(response: RespondInvitation, token: str):
         return {"message": "Respuesta registrada"}
     else:
         raise HTTPException(status_code=400, detail="Error al responder invitación")
-
-@app.get("/groups/invitations/count")
-async def get_pending_invitations_count(token: str):
-    user_id = get_current_user(token)
-    count = group_service.get_pending_invitations_count(user_id)
-    return {"count": count}
 
 # New endpoints for group management
 @app.put("/groups/{group_id}")
@@ -179,21 +197,6 @@ async def remove_member(group_id: int, member_id: int, token: str):
         return {"message": message}
     else:
         raise HTTPException(status_code=400, detail=message)
-
-@app.get("/groups/{group_id}/info")
-async def get_group_info(group_id: int, token: str):
-    get_current_user(token)
-    group_info = group_service.get_group_info(group_id)
-    if group_info:
-        return {
-            "id": group_info[0],
-            "name": group_info[1],
-            "description": group_info[2],
-            "is_hierarchical": group_info[3],
-            "creator_id": group_info[4]
-        }
-    else:
-        raise HTTPException(status_code=404, detail="Grupo no encontrado")
 
 # Event endpoints
 @app.post("/events")

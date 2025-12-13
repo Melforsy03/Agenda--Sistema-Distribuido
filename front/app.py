@@ -3,14 +3,24 @@ import asyncio
 import threading
 import os
 import time
+import warnings
+import logging
 from ui.login_view import show_login_page
 from ui.calendar_view import show_calendar_view
-from ui.event_view import show_create_event_view
+from ui.event_view import show_events_view
 from ui.group_view import show_groups_view
 from ui.invitations_view import show_invitations_view
 from ui.notifications_view import show_notifications_view
 from services.api_client import APIClient
 from services.websocket_client import WebSocketClient
+
+# Suppress asyncio warnings about unclosed resources
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*coroutine.*was never awaited.*')
+warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*Event loop is closed.*')
+warnings.filterwarnings('ignore', category=ResourceWarning)
+
+# Configure logging to suppress certain messages
+logging.getLogger('asyncio').setLevel(logging.ERROR)
 
 # Configuración de la página
 st.set_page_config(
@@ -37,20 +47,24 @@ async def connect_websocket(user_id):
     # If already connected, no need to reconnect
     if ws_client.connected:
         return True
-        
-    success = await ws_client.connect(user_id)
-    if success:
-        # Start listening for messages in a separate task
-        try:
-            # Store the listener task so we can manage it later
-            ws_client.listener_task = asyncio.create_task(ws_client.listen())
-        except Exception as e:
-            if "Event loop is closed" in str(e):
-                ws_client.connected = False
-                return False
-            else:
-                raise e
-    return success
+    
+    try:
+        success = await ws_client.connect(user_id)
+        if success:
+            # Start listening for messages in a separate task
+            try:
+                # Store the listener task so we can manage it later
+                ws_client.listener_task = asyncio.create_task(ws_client.listen())
+            except Exception as e:
+                if "Event loop is closed" in str(e):
+                    ws_client.connected = False
+                    return False
+                else:
+                    raise e
+        return success
+    except Exception as e:
+        st.error(f"Error al conectar WebSocket: {str(e)}")
+        return False
 
 async def disconnect_websocket():
     """Disconnect from WebSocket server"""
@@ -58,7 +72,13 @@ async def disconnect_websocket():
     ws_client.should_stop = True
     
     try:
-        await ws_client.disconnect()
+        await asyncio.wait_for(ws_client.disconnect(), timeout=3.0)
+    except asyncio.TimeoutError:
+        # Force cleanup if timeout
+        ws_client.connected = False
+        ws_client.listening = False
+        if ws_client.listener_task:
+            ws_client.listener_task.cancel()
     except Exception:
         pass  # Ignore errors during disconnect
 
@@ -70,12 +90,41 @@ def restore_session():
         try:
             # Validate token by making a simple API call
             users = api_client.list_users(token)
+            
+            # Get user_id from query params if available
+            if 'user_id' in st.query_params:
+                try:
+                    user_id = int(st.query_params['user_id'])
+                    # Find username for this user_id
+                    username = None
+                    for user in users:
+                        if user[0] == user_id:  # user[0] is user_id
+                            username = user[1]  # user[1] is username
+                            break
+                    
+                    if username:
+                        # Restore complete session state
+                        st.session_state.logged_in = True
+                        st.session_state.session_token = token
+                        st.session_state.user_id = user_id
+                        st.session_state.username = username
+                        st.session_state.websocket_connected = False
+                        return True
+                except (ValueError, IndexError):
+                    pass
+            
+            # If we couldn't restore user_id from query params, token is still valid
+            # but we need to get user info from somewhere else
             st.session_state.logged_in = True
             st.session_state.session_token = token
+            st.session_state.websocket_connected = False
             return True
         except:
             # Token is invalid, remove it
-            del st.query_params['session_token']
+            if 'session_token' in st.query_params:
+                del st.query_params['session_token']
+            if 'user_id' in st.query_params:
+                del st.query_params['user_id']
             return False
 
     return False
@@ -84,6 +133,10 @@ def main():
     # Inicializar estado de sesión
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
+
+    # Inicializar notifications si no existe
+    if "notifications" not in st.session_state:
+        st.session_state.notifications = []
 
     # Intentar restaurar sesión si no está logueado
     if not st.session_state.logged_in:
@@ -182,7 +235,7 @@ def main():
         if 'current_view' in st.session_state:
             requested_view = st.session_state.pop('current_view')
             if requested_view == 'events':
-                default_page = "➕ Crear Evento"
+                default_page = "📋 Eventos"
             else:
                 default_page = "📅 Calendario"
         else:
@@ -191,8 +244,8 @@ def main():
         # Navegación
         page = st.sidebar.radio(
             "Navegación",
-            ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"],
-            index=["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"].index(default_page) if default_page in ["📅 Calendario", "➕ Crear Evento", "👥 Grupos", invitations_label, "🔔 Notificaciones"] else 0
+            ["📅 Calendario", "📋 Eventos", "👥 Grupos", invitations_label, "🔔 Notificaciones"],
+            index=["📅 Calendario", "📋 Eventos", "👥 Grupos", invitations_label, "🔔 Notificaciones"].index(default_page) if default_page in ["📅 Calendario", "📋 Eventos", "👥 Grupos", invitations_label, "🔔 Notificaciones"] else 0
         )
         
         if st.sidebar.button("🚪 Cerrar sesión"):
@@ -218,6 +271,8 @@ def main():
             # Limpiar query params
             if 'session_token' in st.query_params:
                 del st.query_params['session_token']
+            if 'user_id' in st.query_params:
+                del st.query_params['user_id']
 
             # Limpiar session state
             for key in list(st.session_state.keys()):
@@ -228,8 +283,8 @@ def main():
         # Mostrar página seleccionada
         if page == "📅 Calendario":
             show_calendar_view(st.session_state.user_id, api_client, st.session_state.session_token)
-        elif page == "➕ Crear Evento":
-            show_create_event_view(st.session_state.user_id, api_client, st.session_state.session_token)
+        elif page == "📋 Eventos":
+            show_events_view(st.session_state.user_id, api_client, st.session_state.session_token)
         elif page == "👥 Grupos":
             show_groups_view(st.session_state.user_id, api_client, st.session_state.session_token)
         elif page.startswith("📧 Invitaciones"):  # Maneja tanto con badge como sin badge

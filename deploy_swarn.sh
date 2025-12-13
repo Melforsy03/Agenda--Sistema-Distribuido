@@ -8,6 +8,7 @@ NETWORK_NAME="agenda_net"
 DATA_VOLUME="agenda_data"
 BACKEND_IMAGE="agenda_backend"
 FRONTEND_IMAGE="agenda_frontend"
+PYTHONPATH_VALUE="/app:/app/backend"
 
 BACKEND_PORT_API=8766
 BACKEND_PORT_WS=8767
@@ -188,7 +189,7 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
     -p ${BACKEND_PORT_WS}:${BACKEND_PORT_WS} \
     -v $DATA_VOLUME:/app/data \
     -e DOCKER_ENV=true \
-    -e PYTHONPATH=/app \
+    -e PYTHONPATH=${PYTHONPATH_VALUE} \
     -e WEBSOCKET_HOST=backend \
     -e WEBSOCKET_PORT=${BACKEND_PORT_WS} \
     -e DB_PATH=/app/data/agenda.db \
@@ -201,7 +202,7 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
     --name coordinator \
     --network $NETWORK_NAME \
     -p ${COORDINATOR_PORT}:${COORDINATOR_PORT} \
-    -e PYTHONPATH=/app \
+    -e PYTHONPATH=${PYTHONPATH_VALUE} \
     $BACKEND_IMAGE \
     uvicorn distributed.coordinator.router:app --host 0.0.0.0 --port ${COORDINATOR_PORT}
 
@@ -222,7 +223,7 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
       --network $NETWORK_NAME \
       -p ${port}:${port} \
       -v raft_data_${i}:/app/data \
-      -e PYTHONPATH=/app \
+      -e PYTHONPATH=${PYTHONPATH_VALUE} \
       -e SHARD_NAME=$shard \
       -e NODE_ID=$node_name \
       -e PORT=$port \
@@ -248,7 +249,7 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
       --hostname frontend \
       --network $NETWORK_NAME \
       -p ${FRONTEND_PORT}:${FRONTEND_PORT} \
-      -e PYTHONPATH=/app \
+      -e PYTHONPATH=${PYTHONPATH_VALUE} \
       -e API_BASE_URL=http://backend:${BACKEND_PORT_API} \
       -e WEBSOCKET_HOST=backend \
       -e WEBSOCKET_PORT=${BACKEND_PORT_WS} \
@@ -270,7 +271,7 @@ else
     --hostname frontend \
     --network $NETWORK_NAME \
     -p ${FRONTEND_PORT}:${FRONTEND_PORT} \
-    -e PYTHONPATH=/app \
+    -e PYTHONPATH=${PYTHONPATH_VALUE} \
     -e API_URL=http://backend:${BACKEND_PORT_API} \
     -e API_BASE_URL=http://backend:${BACKEND_PORT_API} \
     -e WEBSOCKET_HOST=backend \

@@ -3,8 +3,8 @@ import websockets
 import json
 import logging
 import os
-from .websocket_manager import websocket_manager
-from .auth_service import AuthService
+from services.websocket_manager import websocket_manager
+from services.auth_service import AuthService
 
 logging.basicConfig(level=logging.INFO)
 auth_service = AuthService()

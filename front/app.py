@@ -32,8 +32,11 @@ st.set_page_config(
 # Initialize API client
 api_client = APIClient()
 
-# Initialize WebSocket client
-ws_client = WebSocketClient()
+def get_ws_client() -> WebSocketClient:
+    """WebSocketClient por sesión (evita que pestañas/usuarios se pisen)."""
+    if "ws_client" not in st.session_state:
+        st.session_state.ws_client = WebSocketClient()
+    return st.session_state.ws_client
 
 def get_websocket_url():
     """Obtener URL del WebSocket basado en el entorno"""
@@ -42,45 +45,38 @@ def get_websocket_url():
     port = os.getenv('WEBSOCKET_PORT', '8767')
     return f"ws://{host}:{port}"
 
-async def connect_websocket(user_id, token: str):
-    """Connect to WebSocket server"""
-    # If already connected, no need to reconnect
-    if ws_client.connected:
-        return True
-    
-    try:
-        success = await ws_client.connect(user_id, token)
-        if success:
-            # Start listening for messages in a separate task
-            try:
-                # Store the listener task so we can manage it later
-                ws_client.listener_task = asyncio.create_task(ws_client.listen())
-            except Exception as e:
-                if "Event loop is closed" in str(e):
-                    ws_client.connected = False
-                    return False
-                else:
-                    raise e
-        return success
-    except Exception as e:
-        st.error(f"Error al conectar WebSocket: {str(e)}")
-        return False
+def _notification_handler(data: dict):
+    if "notifications" not in st.session_state:
+        st.session_state.notifications = []
+    text = f"📢 {data.get('type', 'Notificación')}: {data.get('message', 'Nueva notificación')}"
+    st.session_state.notifications.append(text)
 
-async def disconnect_websocket():
-    """Disconnect from WebSocket server"""
-    # Signal the client to stop listening
-    ws_client.should_stop = True
-    
-    try:
-        await asyncio.wait_for(ws_client.disconnect(), timeout=3.0)
-    except asyncio.TimeoutError:
-        # Force cleanup if timeout
-        ws_client.connected = False
-        ws_client.listening = False
-        if ws_client.listener_task:
-            ws_client.listener_task.cancel()
-    except Exception:
-        pass  # Ignore errors during disconnect
+def register_ws_handlers(ws_client: WebSocketClient, user_id: int):
+    """Registrar handlers una sola vez por sesión."""
+    key = f"ws_handlers_registered_{user_id}"
+    if st.session_state.get(key):
+        return
+    for t in [
+        "event_invitation",
+        "group_event_invitation",
+        "event_reminder",
+        "event_accepted",
+        "event_declined",
+        "event_rescheduled",
+        "event_updated",
+        "event_removed",
+        "event_cancelled",
+        "participant_left",
+        "new_group_member",
+        "removed_from_group",
+        "group_deleted",
+        "hierarchical_event_added",
+        "hierarchical_event_updated",
+        "member_conflict",
+        "group_invitation",
+    ]:
+        ws_client.register_handler(t, _notification_handler)
+    st.session_state[key] = True
 
 def restore_session():
     """Restaurar sesión desde query params o localStorage"""
@@ -134,9 +130,7 @@ def main():
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
 
-    # Inicializar notifications si no existe
-    if "notifications" not in st.session_state:
-        st.session_state.notifications = []
+    ensure_notification_state()
 
     # Intentar restaurar sesión si no está logueado
     if not st.session_state.logged_in:
@@ -145,6 +139,7 @@ def main():
     if not st.session_state.logged_in:
         show_login_page(api_client)
     else:
+        ws_client = get_ws_client()
         # Make sure username is in session state
         if 'username' not in st.session_state:
             # Try to get username from API
@@ -181,31 +176,13 @@ def main():
                 st.session_state.logged_in = False
                 st.rerun()
 
-        # Connect to WebSocket if not already connected
-        if 'websocket_connected' not in st.session_state or not st.session_state.websocket_connected:
-            try:
-                # Run async function in a new event loop
-                async def connect():
-                    return await connect_websocket(st.session_state.user_id, st.session_state.session_token)
-                
-                # Create a new event loop for this operation
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    success = loop.run_until_complete(connect())
-                    loop.close()
-                    
-                    st.session_state.websocket_connected = success
-                    if not success:
-                        st.sidebar.error("❌ No se pudo conectar al servidor WebSocket")
-                except Exception as e:
-                    if "Event loop is closed" in str(e):
-                        st.session_state.websocket_connected = False
-                        st.sidebar.warning("⚠️ No se pudo iniciar WebSocket en este entorno")
-                    else:
-                        st.sidebar.error(f"❌ Error de conexión WebSocket: {e}")
-            except Exception as e:
-                st.sidebar.error(f"❌ Error de conexión WebSocket: {e}")
+        # WebSocket por sesión: inicia background y procesa mensajes pendientes en cada rerun.
+        register_ws_handlers(ws_client, int(st.session_state.user_id))
+        ws_client.start_background(int(st.session_state.user_id), st.session_state.session_token)
+        ws_client.dispatch_pending(max_items=200)
+        st.session_state.websocket_connected = bool(ws_client.connected)
+        if not st.session_state.websocket_connected:
+            st.sidebar.warning("⚠️ WebSocket desconectado (sin tiempo real)")
 
         # Obtener conteos de invitaciones pendientes
         try:
@@ -249,24 +226,11 @@ def main():
         )
         
         if st.sidebar.button("🚪 Cerrar sesión"):
-            # Signal WebSocket client to stop listening before disconnecting
-            ws_client.should_stop = True
-            
-            # Disconnect WebSocket before logging out
+            # Detener WS background (por sesión)
             try:
-                async def disconnect():
-                    await disconnect_websocket()
-                
-                # Only attempt to disconnect if we can create a new event loop
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(disconnect())
-                    loop.close()
-                except Exception:
-                    pass  # Ignore errors during disconnect
+                ws_client.stop_background()
             except Exception:
-                pass  # Ignore errors during disconnect on logout
+                pass
             
             # Limpiar query params
             if 'session_token' in st.query_params:

@@ -5,6 +5,8 @@ import os
 import logging
 import atexit
 import warnings
+import threading
+from queue import Queue, Empty
 
 # Suppress specific websocket warnings
 warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*Event loop is closed.*')
@@ -24,6 +26,11 @@ class WebSocketClient:
         self.listener_task = None
         self.should_stop = False
         self._cleanup_registered = False
+        self._incoming: "Queue[dict]" = Queue()
+        self._bg_thread: threading.Thread | None = None
+        self._bg_stop_event = threading.Event()
+        self._bg_running = False
+        self._bg_user_id: int | None = None
         
         # Register cleanup on exit
         if not self._cleanup_registered:
@@ -180,34 +187,23 @@ class WebSocketClient:
         try:
             while not self.should_stop and self.connected and self.websocket:
                 try:
-                    # Use wait_for to avoid blocking indefinitely
                     message = await asyncio.wait_for(self.websocket.recv(), timeout=1.0)
                     data = json.loads(message)
                     message_type = data.get("type")
-                    
-                    # Handle ping messages automatically
+
                     if message_type == "ping":
                         await self.send_message({"type": "pong"})
                         continue
-                    
-                    # Call registered handlers for this message type
-                    if message_type in self.message_handlers:
-                        for handler in self.message_handlers[message_type]:
-                            try:
-                                # Run handler synchronously to avoid task creation issues
-                                handler(data)
-                            except Exception as e:
-                                self.logger.error(f"Error in message handler: {e}")
-                    else:
-                        self.logger.info(f"Received unhandled message: {data}")
-                        
+
+                    # Encolar para procesar en el thread principal de Streamlit.
+                    if isinstance(data, dict):
+                        self._incoming.put(data)
+
                 except asyncio.TimeoutError:
-                    # Timeout is expected, continue listening
                     if self.should_stop:
                         break
                     continue
                 except asyncio.CancelledError:
-                    # Task was cancelled, exit gracefully
                     self.logger.info("Listen task cancelled")
                     break
                 except json.JSONDecodeError:
@@ -224,16 +220,11 @@ class WebSocketClient:
                     if self.should_stop:
                         break
                     continue
-                    
-        except asyncio.CancelledError:
-            self.logger.info("Listen task cancelled during execution")
-        except Exception as e:
-            self.logger.error(f"Unexpected error in listen loop: {e}")
         finally:
             self.listening = False
             self.should_stop = True
             self.logger.info("Stopped listening for WebSocket messages")
-    
+
     def register_handler(self, message_type, handler):
         """Register a handler for a specific message type"""
         if message_type not in self.message_handlers:
@@ -247,3 +238,93 @@ class WebSocketClient:
                 self.message_handlers[message_type].remove(handler)
             if not self.message_handlers[message_type]:
                 del self.message_handlers[message_type]
+
+    def drain_messages(self, max_items: int = 200) -> list[dict]:
+        """Drenar mensajes recibidos (thread-safe) para procesarlos en el hilo principal."""
+        drained: list[dict] = []
+        for _ in range(max_items):
+            try:
+                drained.append(self._incoming.get_nowait())
+            except Empty:
+                break
+        return drained
+
+    def dispatch_pending(self, max_items: int = 200) -> int:
+        """Ejecuta handlers registrados para los mensajes encolados."""
+        msgs = self.drain_messages(max_items=max_items)
+        for data in msgs:
+            mtype = data.get("type")
+            if mtype in self.message_handlers:
+                for handler in list(self.message_handlers[mtype]):
+                    try:
+                        handler(data)
+                    except Exception as e:
+                        self.logger.error(f"Error in message handler: {e}")
+        return len(msgs)
+
+    def start_background(self, user_id: int, token: str):
+        """Inicia conexión/listen en background para evitar que se caiga por reruns."""
+        if self._bg_thread and self._bg_thread.is_alive() and self._bg_user_id == int(user_id):
+            return
+
+        # Si estaba corriendo para otro usuario, detener primero.
+        if self._bg_thread and self._bg_thread.is_alive():
+            self.stop_background()
+
+        self._bg_stop_event = threading.Event()
+        self._bg_user_id = int(user_id)
+
+        def _runner():
+            self._bg_running = True
+            try:
+                asyncio.run(self._background_main(int(user_id), token))
+            except Exception as e:
+                self.logger.error(f"Background WS runner error: {e}")
+            finally:
+                self._bg_running = False
+
+        self._bg_thread = threading.Thread(target=_runner, daemon=True)
+        self._bg_thread.start()
+
+    def stop_background(self, timeout_s: float = 2.0):
+        """Detiene el listener en background."""
+        try:
+            self._bg_stop_event.set()
+        except Exception:
+            pass
+        self.should_stop = True
+        self.connected = False
+        t = self._bg_thread
+        if t and t.is_alive():
+            t.join(timeout=timeout_s)
+        self._bg_thread = None
+        self._bg_user_id = None
+
+    async def _background_main(self, user_id: int, token: str):
+        """Loop de reconexión y recepción."""
+        backoff = 0.5
+        while not self._bg_stop_event.is_set():
+            try:
+                ok = await self.connect(user_id, token)
+                if not ok:
+                    await asyncio.sleep(backoff)
+                    backoff = min(5.0, backoff * 2)
+                    continue
+
+                backoff = 0.5
+                self.should_stop = False
+                await self.listen()
+            except Exception:
+                self.connected = False
+            finally:
+                try:
+                    if self.websocket:
+                        await self.websocket.close()
+                except Exception:
+                    pass
+                self.websocket = None
+                self.connected = False
+
+            if not self._bg_stop_event.is_set():
+                await asyncio.sleep(backoff)
+                backoff = min(5.0, backoff * 2)

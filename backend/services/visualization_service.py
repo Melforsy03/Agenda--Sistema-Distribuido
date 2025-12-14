@@ -35,7 +35,8 @@ class VisualizationService:
             # Obtener eventos del usuario en el rango de fechas
             self.db.cursor.execute('''
                 SELECT e.id, e.title, e.description, e.start_time, e.end_time,
-                       e.is_group_event, g.name as group_name
+                       e.is_group_event, e.group_id,
+                       g.name as group_name, e.creator_id
                 FROM events e
                 LEFT JOIN event_participants ep ON e.id = ep.event_id
                 LEFT JOIN groups g ON e.group_id = g.id
@@ -48,15 +49,23 @@ class VisualizationService:
 
             events = []
             for row in self.db.cursor.fetchall():
-                event_id, title, description, start_time, end_time, is_group_event, group_name = row
+                event_id, title, description, start_time, end_time, is_group_event, event_group_id, group_name, creator_id = row
+
+                # Privacidad: si el evento no corresponde al grupo consultado, ocultar detalles.
+                show_details = bool(is_group_event) and event_group_id == group_id
+                safe_title = title if show_details else "Ocupado"
+                safe_description = description if show_details else None
+
                 events.append({
                     'id': event_id,
-                    'title': title,
-                    'description': description,
+                    'title': safe_title,
+                    'description': safe_description,
                     'start_time': start_time,
                     'end_time': end_time,
                     'is_group_event': is_group_event,
-                    'group_name': group_name
+                    'group_name': group_name,
+                    'creator_id': creator_id,
+                    'is_private': not show_details,
                 })
 
             group_agendas[username] = {

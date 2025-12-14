@@ -42,14 +42,14 @@ def get_websocket_url():
     port = os.getenv('WEBSOCKET_PORT', '8767')
     return f"ws://{host}:{port}"
 
-async def connect_websocket(user_id):
+async def connect_websocket(user_id, token: str):
     """Connect to WebSocket server"""
     # If already connected, no need to reconnect
     if ws_client.connected:
         return True
     
     try:
-        success = await ws_client.connect(user_id)
+        success = await ws_client.connect(user_id, token)
         if success:
             # Start listening for messages in a separate task
             try:
@@ -186,7 +186,7 @@ def main():
             try:
                 # Run async function in a new event loop
                 async def connect():
-                    return await connect_websocket(st.session_state.user_id)
+                    return await connect_websocket(st.session_state.user_id, st.session_state.session_token)
                 
                 # Create a new event loop for this operation
                 try:

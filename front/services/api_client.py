@@ -117,6 +117,32 @@ class APIClient:
         """Get complete group information"""
         return self._make_request("GET", f"/groups/{group_id}/info", params={"token": token})
 
+    # Visualization / availability
+    def get_group_agendas(self, group_id: int, start_date: str, end_date: str, token: str):
+        """Get agendas for a group within a time window."""
+        return self._make_request(
+            "GET",
+            f"/groups/{group_id}/agendas",
+            params={"token": token, "start_date": start_date, "end_date": end_date},
+        )
+
+    def get_common_availability(self, group_id: int, start_date: str, end_date: str, duration_hours: float, token: str):
+        """Get common availability slots for a group."""
+        return self._make_request(
+            "GET",
+            f"/groups/{group_id}/availability/common",
+            params={
+                "token": token,
+                "start_date": start_date,
+                "end_date": end_date,
+                "duration_hours": duration_hours,
+            },
+        )
+
+    def get_event_conflicts(self, token: str, limit: int = 50):
+        """Get conflicts registered for the current user."""
+        return self._make_request("GET", "/events/conflicts", params={"token": token, "limit": limit})
+
     # Event methods
     def create_event(self, title: str, description: str, start_time: str, end_time: str,
                      token: str, group_id: Optional[int] = None, is_group_event: bool = False,
@@ -133,6 +159,30 @@ class APIClient:
             "is_hierarchical": is_hierarchical
         }
         return self._make_request("POST", "/events", json=data, params={"token": token})
+
+    def update_event(
+        self,
+        event_id: int,
+        token: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        participants_ids: Optional[List[int]] = None,
+    ):
+        """Update/reschedule an event (creator only)."""
+        data = {}
+        if title is not None:
+            data["title"] = title
+        if description is not None:
+            data["description"] = description
+        if start_time is not None:
+            data["start_time"] = start_time
+        if end_time is not None:
+            data["end_time"] = end_time
+        if participants_ids is not None:
+            data["participants_ids"] = participants_ids
+        return self._make_request("PUT", f"/events/{event_id}", json=data, params={"token": token})
     
     def get_user_events(self, token: str):
         """Get user events"""

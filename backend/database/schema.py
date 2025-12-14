@@ -36,6 +36,7 @@ def setup_database(db_name='agenda.db'):
             creator_id INTEGER NOT NULL,
             group_id INTEGER,
             is_group_event BOOLEAN NOT NULL DEFAULT 0,
+            is_hierarchical_event BOOLEAN NOT NULL DEFAULT 0,
             FOREIGN KEY (creator_id) REFERENCES users(id),
             FOREIGN KEY (group_id) REFERENCES groups(id)
         );
@@ -79,6 +80,28 @@ def setup_database(db_name='agenda.db'):
             FOREIGN KEY (inviter_user_id) REFERENCES users(id)
         );
     ''')
+
+    # Conflictos (útil para eventos jerárquicos que se imponen aunque haya solapamiento)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS event_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            reason TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (event_id) REFERENCES events(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+    ''')
+
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_conflicts_user ON event_conflicts(user_id);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_conflicts_event ON event_conflicts(event_id);')
+
+    # Migraciones livianas: agregar columnas faltantes sin romper DBs existentes.
+    cursor.execute("PRAGMA table_info(events);")
+    event_cols = {row[1] for row in cursor.fetchall()}  # row[1] = name
+    if "is_hierarchical_event" not in event_cols:
+        cursor.execute("ALTER TABLE events ADD COLUMN is_hierarchical_event BOOLEAN NOT NULL DEFAULT 0;")
 
     conn.commit()
     conn.close()

@@ -13,12 +13,16 @@ from services.auth_service import AuthService
 from services.group_service import GroupService
 from services.event_service import EventService
 from services.session_manager import SessionManager
+from services.notification_service import NotificationService
+from services.visualization_service import VisualizationService
 
 # Inicializar servicios
 auth_service = AuthService()
 group_service = GroupService()
 event_service = EventService()
 session_manager = SessionManager()
+notification_service = NotificationService()
+visualization_service = VisualizationService()
 
 # Modelos para las solicitudes
 class UserLogin(BaseModel):
@@ -61,6 +65,13 @@ class UpdateGroup(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
+class UpdateEvent(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    participants_ids: Optional[List[int]] = None
+
 # Dependencia para obtener el user_id desde el token
 def get_current_user(token: str):
     session_data = session_manager.get_session(token)
@@ -73,6 +84,7 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup
     asyncio.create_task(start_websocket_server())
+    asyncio.create_task(notification_service.start_reminder_scheduler())
     yield
     # Shutdown
     pass
@@ -238,6 +250,69 @@ async def get_pending_event_invitations_count(token: str):
     user_id = get_current_user(token)
     count = event_service.get_pending_invitations_count(user_id)
     return {"count": count}
+
+# Event management endpoints
+@app.delete("/events/{event_id}")
+async def cancel_event(event_id: int, token: str):
+    user_id = get_current_user(token)
+    success, message = await event_service.cancel_event(event_id, user_id)
+    if success:
+        return {"message": message}
+    raise HTTPException(status_code=400, detail=message)
+
+@app.delete("/events/{event_id}/leave")
+async def leave_event(event_id: int, token: str):
+    user_id = get_current_user(token)
+    success, message = await event_service.leave_event(event_id, user_id)
+    if success:
+        return {"message": message}
+    raise HTTPException(status_code=400, detail=message)
+
+@app.put("/events/{event_id}")
+async def update_event(event_id: int, update: UpdateEvent, token: str):
+    user_id = get_current_user(token)
+    payload = update.dict(exclude_unset=True)
+    success, message = await event_service.update_event(event_id, user_id, **payload)
+    if success:
+        return {"message": message}
+    raise HTTPException(status_code=400, detail=message)
+
+@app.get("/events/{event_id}/details")
+async def get_event_details(event_id: int, token: str):
+    user_id = get_current_user(token)
+    event_details, message = event_service.get_event_details(event_id, user_id)
+    if event_details:
+        return event_details
+    raise HTTPException(status_code=400, detail=message)
+
+@app.get("/events/conflicts")
+async def get_event_conflicts(token: str, limit: int = 50):
+    """Conflictos registrados para el usuario (principalmente por eventos jerárquicos)."""
+    user_id = get_current_user(token)
+    return event_service.db.get_user_event_conflicts(user_id, limit=limit)
+
+# Group visualization endpoints
+@app.get("/groups/{group_id}/agendas")
+async def get_group_agendas(group_id: int, token: str, start_date: str, end_date: str):
+    """
+    Ver agendas del grupo en un intervalo [start_date, end_date].
+    Fechas esperadas: 'YYYY-MM-DD HH:MM:SS'
+    """
+    viewer_id = get_current_user(token)
+    agendas, message = visualization_service.get_group_agendas(viewer_id, group_id, start_date, end_date)
+    if agendas is not None:
+        return agendas
+    raise HTTPException(status_code=400, detail=message)
+
+@app.get("/groups/{group_id}/availability/common")
+async def get_common_availability(group_id: int, token: str, start_date: str, end_date: str, duration_hours: float = 1.0):
+    """Horarios comunes disponibles para todo el grupo."""
+    viewer_id = get_current_user(token)
+    # Validar acceso al grupo (misma regla que agendas)
+    agendas, message = visualization_service.get_group_agendas(viewer_id, group_id, start_date, end_date)
+    if agendas is None:
+        raise HTTPException(status_code=400, detail=message)
+    return visualization_service.get_common_availability(group_id, start_date.split(" ")[0], end_date.split(" ")[0], duration_hours)
 
 @app.get("/")
 async def root():

@@ -325,127 +325,93 @@ def show_member_management(leader_id, group_id, member_details, api_client, toke
 
 def show_group_agendas(viewer_id, group_id, api_client, token):
     """Mostrar agendas del grupo con control de acceso"""
-    st.subheader("📊 Agendas del grupo")
+    col_title, col_close = st.columns([3, 1])
+    with col_title:
+        st.subheader("📊 Agendas del grupo")
+    with col_close:
+        if st.button("Cerrar agendas", key=f"close_agendas_{group_id}"):
+            st.session_state.pop("current_group_view", None)
+            st.rerun()
     
     try:
-        # Get group members
-        members = api_client.list_group_members(group_id, token)
-        
-        if not members:
-            st.info("No hay miembros en este grupo")
-            return
-            
-        # Get events for each member
-        all_events = []
-        member_names = {}
-        
-        for member_id, member_name in members:
-            member_names[member_id] = member_name
-            try:
-                # Get events for this member
-                events = api_client.get_user_events_detailed(token, "all")
-                # Filter events that are related to this group
-                group_events = [e for e in events if e.get('group_id') == group_id]
-                for event in group_events:
-                    event['member_id'] = member_id
-                    event['member_name'] = member_name
-                    all_events.append(event)
-            except Exception as e:
-                st.warning(f"Error al cargar eventos para {member_name}: {str(e)}")
-        
-        if not all_events:
-            st.info("No hay eventos en este grupo")
-            return
-            
-        # Group events by date
-        events_by_date = {}
-        for event in all_events:
-            try:
-                date_key = event['start_time'].split(' ')[0]  # Extract date part
-                if date_key not in events_by_date:
-                    events_by_date[date_key] = []
-                events_by_date[date_key].append(event)
-            except:
-                continue
-        
-        # Display events
-        for date_key in sorted(events_by_date.keys()):
-            st.markdown(f"### 📅 {date_key}")
-            for event in events_by_date[date_key]:
-                with st.expander(f"{event['title']} - {event['member_name']}"):
-                    st.write(f"⏰ **{event['start_time']}** a **{event['end_time']}**")
-                    if event['description']:
-                        st.write(f"📝 {event['description']}")
-                    st.write(f"👤 **Creador:** {event['creator_name']}")
+        st.markdown("Selecciona un rango de fechas para visualizar las agendas del grupo.")
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Desde", key=f"agendas_start_{group_id}")
+        with col2:
+            end_date = st.date_input("Hasta", key=f"agendas_end_{group_id}")
+
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time()).replace(microsecond=0)
+        start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+        end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        agendas = api_client.get_group_agendas(group_id, start_str, end_str, token)
+
+        if not agendas:
+            st.info("No hay eventos en el período seleccionado o no tienes permisos para verlos.")
+        else:
+            # Mostrar por usuario
+            for username, payload in agendas.items():
+                events = payload.get("events", [])
+                with st.expander(f"👤 {username} ({len(events)})", expanded=False):
+                    if not events:
+                        st.caption("Sin eventos en el rango.")
+                        continue
+                    for e in events:
+                        title = e.get("title", "Evento")
+                        is_private = e.get("is_private", False)
+                        private_badge = "🔒" if is_private else "👥"
+                        st.write(f"{private_badge} **{title}**")
+                        st.caption(f"{e.get('start_time')} → {e.get('end_time')}")
+                        if e.get("description"):
+                            st.write(e.get("description"))
+
     except Exception as e:
         st.error(f"Error al cargar agendas del grupo: {str(e)}")
-    
-    # Button to close the view
-    if st.button("Cerrar agendas", key=f"close_agendas_{group_id}"):
-        del st.session_state.current_group_view
-        st.rerun()
 
 def show_common_availability(group_id, api_client, token):
     """Mostrar horarios comunes disponibles"""
-    st.subheader("🕐 Horarios comunes disponibles")
+    col_title, col_close = st.columns([3, 1])
+    with col_title:
+        st.subheader("🕐 Horarios comunes disponibles")
+    with col_close:
+        if st.button("Cerrar disponibilidad", key=f"close_availability_{group_id}"):
+            st.session_state.pop("common_availability_group", None)
+            st.rerun()
     
     try:
-        # Get group members
-        members = api_client.list_group_members(group_id, token)
-        
-        if not members:
-            st.info("No hay miembros en este grupo para calcular disponibilidad")
-            return
-            
-        # Get events for each member in the next week
-        all_events = []
-        member_names = {}
-        
-        # Calculate date range for next week
-        today = datetime.now()
-        next_week = today + timedelta(days=7)
-        
-        for member_id, member_name in members:
-            member_names[member_id] = member_name
-            try:
-                # Get upcoming events for this member
-                events = api_client.get_user_events_detailed(token, "upcoming")
-                # Filter events for the next week
-                week_events = [e for e in events if e.get('group_id') == group_id]
-                for event in week_events:
-                    try:
-                        event_start = datetime.strptime(event['start_time'], '%Y-%m-%d %H:%M:%S')
-                        if today <= event_start <= next_week:
-                            event['member_id'] = member_id
-                            all_events.append(event)
-                    except:
-                        continue
-            except Exception as e:
-                st.warning(f"Error al cargar eventos para {member_name}: {str(e)}")
-        
-        # Find common free slots (simplified approach)
-        st.info("Búsqueda de disponibilidad común en desarrollo...")
-        st.write("Los miembros del grupo:")
-        for _, member_name in members:
-            st.write(f"- 👤 {member_name}")
-            
-        if all_events:
-            st.write("Próximos eventos:")
-            for event in all_events[:5]:  # Show first 5 events
-                st.write(f"- 📅 {event['title']} ({event['start_time']}) - {member_names.get(event.get('member_id', ''), 'Desconocido')}")
+        st.markdown("Selecciona un rango de fechas y duración para buscar espacios libres para todo el grupo.")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            start_date = st.date_input("Desde", key=f"avail_start_{group_id}")
+        with col2:
+            end_date = st.date_input("Hasta", key=f"avail_end_{group_id}")
+        with col3:
+            duration_hours = st.number_input("Duración (horas)", min_value=0.5, max_value=8.0, value=1.0, step=0.5, key=f"avail_dur_{group_id}")
+
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time()).replace(microsecond=0)
+        start_str = start_dt.strftime('%Y-%m-%d %H:%M:%S')
+        end_str = end_dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        slots = api_client.get_common_availability(group_id, start_str, end_str, float(duration_hours), token)
+
+        if not slots:
+            st.info("No se encontraron horarios comunes disponibles en el rango.")
         else:
-            st.write("No hay eventos programados en la próxima semana")
-            
-        # Suggest common time slots (simplified)
-        st.subheader("Sugerencias de horarios comunes:")
-        st.write("🕒 Mañana (9:00 - 12:00)")
-        st.write("🕒 Tarde (14:00 - 17:00)")
-        st.write("🕒 Noche (19:00 - 21:00)")
+            st.success(f"Encontrados {len(slots)} horarios comunes.")
+            for i, slot in enumerate(slots[:50]):  # evitar listas enormes
+                col_slot, col_btn = st.columns([3, 1])
+                with col_slot:
+                    st.write(f"🕒 {slot['start_time']} → {slot['end_time']}")
+                with col_btn:
+                    if st.button("Usar", key=f"use_slot_{group_id}_{i}"):
+                        st.session_state.prefill_start = slot['start_time']
+                        st.session_state.prefill_end = slot['end_time']
+                        st.session_state.prefill_group_id = group_id
+                        st.session_state.current_view = 'events'
+                        st.rerun()
         
     except Exception as e:
         st.error(f"Error al calcular disponibilidad común: {str(e)}")
-    
-    # Button to close the view
-    if st.button("Cerrar disponibilidad", key=f"close_availability_{group_id}"):
-        del st.session_state.common_availability_group
-        st.rerun()

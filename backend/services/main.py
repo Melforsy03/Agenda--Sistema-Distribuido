@@ -65,6 +65,13 @@ class UpdateGroup(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
+class UpdateEvent(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    participants_ids: Optional[List[int]] = None
+
 # Dependencia para obtener el user_id desde el token
 def get_current_user(token: str):
     session_data = session_manager.get_session(token)
@@ -261,6 +268,15 @@ async def leave_event(event_id: int, token: str):
         return {"message": message}
     else:
         raise HTTPException(status_code=400, detail=message)
+
+@app.put("/events/{event_id}")
+async def update_event(event_id: int, update: UpdateEvent, token: str):
+    user_id = get_current_user(token)
+    payload = update.dict(exclude_unset=True)
+    success, message = await event_service.update_event(event_id, user_id, **payload)
+    if success:
+        return {"message": message}
+    raise HTTPException(status_code=400, detail=message)
 
 @app.get("/events/{event_id}/details")
 async def get_event_details(event_id: int, token: str):

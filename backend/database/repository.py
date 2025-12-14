@@ -65,7 +65,17 @@ class Database:
         return self.cursor.fetchall()
 
     # ---------- Eventos ----------
-    def add_event(self, title, description, start_time, end_time, creator_id, group_id=None, is_group_event=False):
+    def add_event(
+        self,
+        title,
+        description,
+        start_time,
+        end_time,
+        creator_id,
+        group_id=None,
+        is_group_event=False,
+        is_hierarchical_event=False,
+    ):
         try:
             # Validate required fields
             if not title:
@@ -78,14 +88,59 @@ class Database:
                 raise ValueError("Creator ID is required")
                 
             self.cursor.execute('''
-                INSERT INTO events (title, description, start_time, end_time, creator_id, group_id, is_group_event)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (title, description, start_time, end_time, creator_id, group_id, is_group_event))
+                INSERT INTO events (
+                    title, description, start_time, end_time, creator_id,
+                    group_id, is_group_event, is_hierarchical_event
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (title, description, start_time, end_time, creator_id, group_id, is_group_event, is_hierarchical_event))
             self.conn.commit()
             return self.cursor.lastrowid
         except Exception as e:
             self.conn.rollback()
             raise Exception(f"Failed to add event to database: {str(e)}")
+
+    def get_event(self, event_id: int):
+        self.cursor.execute(
+            '''
+            SELECT id, title, description, start_time, end_time, creator_id,
+                   group_id, is_group_event, is_hierarchical_event
+            FROM events
+            WHERE id = ?
+            ''',
+            (event_id,),
+        )
+        return self.cursor.fetchone()
+
+    def update_event(self, event_id: int, title=None, description=None, start_time=None, end_time=None):
+        updates = []
+        params = []
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if start_time is not None:
+            updates.append("start_time = ?")
+            params.append(start_time)
+        if end_time is not None:
+            updates.append("end_time = ?")
+            params.append(end_time)
+
+        if not updates:
+            return True
+
+        params.append(event_id)
+        query = f"UPDATE events SET {', '.join(updates)} WHERE id = ?"
+        try:
+            self.cursor.execute(query, params)
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            return False
 
     def add_participant_to_event(self, event_id, user_id, is_accepted=False):
         try:
@@ -103,6 +158,62 @@ class Database:
         except Exception as e:
             self.conn.rollback()
             raise Exception(f"Failed to add participant to event: {str(e)}")
+
+    def upsert_event_participant(self, event_id: int, user_id: int, is_accepted: bool):
+        try:
+            self.cursor.execute(
+                'INSERT INTO event_participants (event_id, user_id, is_accepted) VALUES (?, ?, ?)',
+                (event_id, user_id, bool(is_accepted)),
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            try:
+                self.cursor.execute(
+                    'UPDATE event_participants SET is_accepted = ? WHERE event_id = ? AND user_id = ?',
+                    (bool(is_accepted), event_id, user_id),
+                )
+                self.conn.commit()
+                return True
+            except Exception:
+                self.conn.rollback()
+                return False
+        except Exception:
+            self.conn.rollback()
+            return False
+
+    def remove_event_participant(self, event_id: int, user_id: int):
+        try:
+            self.cursor.execute(
+                'DELETE FROM event_participants WHERE event_id = ? AND user_id = ?',
+                (event_id, user_id),
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            return False
+
+    def get_event_participants(self, event_id: int):
+        self.cursor.execute(
+            'SELECT user_id, is_accepted FROM event_participants WHERE event_id = ?',
+            (event_id,),
+        )
+        return self.cursor.fetchall()
+
+    def set_event_participants_acceptance(self, event_id: int, user_ids: list[int], is_accepted: bool):
+        if not user_ids:
+            return True
+        try:
+            self.cursor.executemany(
+                'UPDATE event_participants SET is_accepted = ? WHERE event_id = ? AND user_id = ?',
+                [(bool(is_accepted), event_id, uid) for uid in user_ids],
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            return False
 
     def get_events_by_user(self, user_id):
         self.cursor.execute('''
@@ -132,6 +243,37 @@ class Database:
             if start < datetime.strptime(e, '%Y-%m-%d %H:%M:%S') and end > datetime.strptime(s, '%Y-%m-%d %H:%M:%S'):
                 return True
         return False
+
+    def check_conflict_excluding_event(self, user_id, start_time, end_time, exclude_event_id: int):
+        start = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+        end = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
+
+        self.cursor.execute(
+            '''
+            SELECT e.id, e.start_time, e.end_time
+            FROM events e
+            LEFT JOIN event_participants ep ON e.id = ep.event_id
+            WHERE e.id != ?
+              AND (ep.user_id = ? OR e.creator_id = ?)
+              AND (ep.is_accepted = 1 OR e.creator_id = ?)
+            ''',
+            (exclude_event_id, user_id, user_id, user_id),
+        )
+
+        for _, s, e in self.cursor.fetchall():
+            if start < datetime.strptime(e, '%Y-%m-%d %H:%M:%S') and end > datetime.strptime(s, '%Y-%m-%d %H:%M:%S'):
+                return True
+        return False
+
+    # ---------- Conflictos ----------
+    def clear_event_conflicts(self, event_id: int):
+        try:
+            self.cursor.execute('DELETE FROM event_conflicts WHERE event_id = ?', (event_id,))
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            return False
 
     # ---------- Grupos ----------
     def add_group(self, name, description="", is_hierarchical=False, creator_id=None):
@@ -203,6 +345,13 @@ class Database:
             WHERE ug.group_id = ?
         ''', (group_id,))
         return self.cursor.fetchall()
+
+    def get_group_member_ids(self, group_id: int) -> list[int]:
+        self.cursor.execute(
+            'SELECT user_id FROM user_groups WHERE group_id = ?',
+            (group_id,),
+        )
+        return [r[0] for r in self.cursor.fetchall()]
 
     def get_pending_invitations(self, user_id):
         self.cursor.execute('''
@@ -309,3 +458,36 @@ class Database:
             print(f"Error al eliminar grupo: {e}")
             self.conn.rollback()
             return False
+
+    # ---------- Conflictos ----------
+    def add_event_conflict(self, event_id: int, user_id: int, reason: str = "") -> bool:
+        """Registrar un conflicto detectado para un usuario en un evento."""
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            self.cursor.execute(
+                '''
+                INSERT INTO event_conflicts (event_id, user_id, reason, created_at)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (event_id, user_id, reason or "", created_at),
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            return False
+
+    def get_user_event_conflicts(self, user_id: int, limit: int = 50):
+        """Obtener conflictos registrados para un usuario."""
+        self.cursor.execute(
+            '''
+            SELECT ec.id, ec.event_id, e.title, e.start_time, e.end_time, ec.reason, ec.created_at
+            FROM event_conflicts ec
+            JOIN events e ON e.id = ec.event_id
+            WHERE ec.user_id = ?
+            ORDER BY ec.created_at DESC
+            LIMIT ?
+            ''',
+            (user_id, limit),
+        )
+        return self.cursor.fetchall()

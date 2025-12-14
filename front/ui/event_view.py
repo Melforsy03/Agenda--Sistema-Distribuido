@@ -133,6 +133,10 @@ def show_event_card(event, user_id, api_client, token):
                 if st.button(f"❌ Cancelar evento", key=f"cancel_{event['id']}"):
                     st.session_state[f'confirm_cancel_{event["id"]}'] = True
 
+            with col_actions3:
+                if st.button("✏️ Replanificar", key=f"edit_{event['id']}"):
+                    st.session_state[f'editing_event_{event["id"]}'] = True
+
             # Confirmación de cancelación
             if st.session_state.get(f'confirm_cancel_{event["id"]}', False):
                 st.warning("⚠️ ¿Estás seguro de que quieres cancelar este evento?")
@@ -180,6 +184,10 @@ def show_event_card(event, user_id, api_client, token):
         # Mostrar detalles completos si se solicita
         if st.session_state.get(f'show_details_{event["id"]}', False):
             show_event_details(event['id'], user_id, api_client, token)
+
+        # Mostrar formulario de edición si se solicita (solo creador)
+        if event['is_creator'] and st.session_state.get(f'editing_event_{event["id"]}', False):
+            show_event_edit_form(event, api_client, token)
 
         st.markdown("---")
 
@@ -238,6 +246,96 @@ def show_event_details(event_id, user_id, api_client, token):
         # Botón para cerrar detalles
         if st.button("Cerrar detalles", key=f"close_details_{event_id}_error"):
             st.session_state[f'show_details_{event_id}'] = False
+            st.rerun()
+
+
+def show_event_edit_form(event, api_client, token):
+    """Formulario de edición/replanificación (solo creador)."""
+    event_id = int(event["id"])
+    st.subheader("✏️ Replanificar / editar evento")
+    details = None
+    try:
+        details = api_client.get_event_details(event_id, token)
+    except Exception:
+        # Fallback: permitir editar usando la info de la lista si el endpoint de detalles falla.
+        details = {
+            "title": event.get("title"),
+            "description": event.get("description"),
+            "start_time": event.get("start_time"),
+            "end_time": event.get("end_time"),
+            "is_hierarchical_event": False,
+        }
+        st.warning("No se pudieron cargar los detalles completos; se usará la información disponible.")
+
+    try:
+        start_dt = datetime.strptime(details["start_time"], "%Y-%m-%d %H:%M:%S")
+        end_dt = datetime.strptime(details["end_time"], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        now = datetime.now()
+        start_dt = now.replace(minute=0, second=0, microsecond=0)
+        end_dt = start_dt
+
+    title = st.text_input("Título", value=details.get("title") or "", key=f"edit_title_{event_id}")
+    description = st.text_area("Descripción", value=details.get("description") or "", key=f"edit_desc_{event_id}")
+
+    if details.get("is_hierarchical_event"):
+        st.info("Este es un evento jerárquico: al reprogramarlo se aplica a todo el grupo; si hay conflictos, se registran.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input(
+            "Fecha inicio",
+            value=start_dt.date() if start_dt else None,
+            key=f"edit_start_date_{event_id}",
+        )
+        start_time = st.time_input(
+            "Hora inicio",
+            value=start_dt.time() if start_dt else None,
+            key=f"edit_start_time_{event_id}",
+        )
+    with col2:
+        end_date = st.date_input(
+            "Fecha fin",
+            value=end_dt.date() if end_dt else None,
+            key=f"edit_end_date_{event_id}",
+        )
+        end_time = st.time_input(
+            "Hora fin",
+            value=end_dt.time() if end_dt else None,
+            key=f"edit_end_time_{event_id}",
+        )
+
+    start_str = f"{start_date} {start_time}"
+    end_str = f"{end_date} {end_time}"
+
+    col_save, col_close = st.columns(2)
+    with col_save:
+        if st.button("💾 Guardar cambios", key=f"save_edit_{event_id}"):
+            try:
+                start_norm = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+                end_norm = datetime.strptime(end_str, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                st.error("Formato de fecha/hora inválido")
+                return
+
+            try:
+                resp = api_client.update_event(
+                    event_id,
+                    token=token,
+                    title=title,
+                    description=description,
+                    start_time=start_norm,
+                    end_time=end_norm,
+                )
+                st.success(resp.get("message", "Evento actualizado"))
+                st.session_state[f'editing_event_{event_id}'] = False
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al actualizar el evento: {e}")
+
+    with col_close:
+        if st.button("Cerrar edición", key=f"close_edit_{event_id}"):
+            st.session_state[f'editing_event_{event_id}'] = False
             st.rerun()
 
 
@@ -304,12 +402,20 @@ def show_create_event_view(user_id, api_client, token):
 
                 selected_group_name = st.selectbox("Selecciona grupo", group_names, index=default_index)
                 group_id = [g[0] for g in groups if g[1] == selected_group_name][0]
-                
-                # Note: Hierarchy service functionality would need to be implemented in the API
-                # For now, we'll skip the hierarchical option
+
+                # Opción jerárquica (solo si el grupo es jerárquico y el usuario es el creador/líder)
+                group_info = api_client.get_group_info(group_id, token)
+                can_hierarchical = bool(group_info.get("is_hierarchical")) and int(group_info.get("creator_id")) == int(user_id)
+                if can_hierarchical:
+                    is_hierarchical = st.checkbox(
+                        "Evento jerárquico (obligatorio para todos)",
+                        value=False,
+                        help="Si lo activas, el evento se agrega automáticamente a todos los miembros del grupo. Si hay conflictos, se registran.",
+                    )
+
                 members = api_client.list_group_members(group_id, token)
                 participants_ids = [m[0] for m in members]
-                
+
                 st.info(f"Participantes: {', '.join([m[1] for m in members])}")
             else:
                 st.warning("No tienes grupos")

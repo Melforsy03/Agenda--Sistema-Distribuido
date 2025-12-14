@@ -5,9 +5,11 @@ import logging
 import os
 from services.websocket_manager import websocket_manager
 from services.auth_service import AuthService
+from services.session_manager import SessionManager
 
 logging.basicConfig(level=logging.INFO)
 auth_service = AuthService()
+session_manager = SessionManager()
 
 async def websocket_handler(websocket):
     """Manejador principal de conexiones WebSocket"""
@@ -19,19 +21,44 @@ async def websocket_handler(websocket):
         auth_data = json.loads(auth_message)
         
         if auth_data.get('type') == 'auth':
-            user_id = auth_data.get('user_id')
-            
-            if user_id:
-                await websocket_manager.connect(websocket, user_id)
-                logging.info(f"Usuario {user_id} conectado via WebSocket desde {websocket.remote_address}")
-                
+            token = auth_data.get('token')
+            requested_user_id = auth_data.get('user_id')
+
+            # Validar sesión
+            session_data = session_manager.get_session(token)
+            if not session_data:
                 await websocket.send(json.dumps({
-                    "type": "auth_success",
-                    "message": "Conexión WebSocket establecida"
+                    "type": "auth_error",
+                    "message": "Sesión inválida o expirada"
                 }))
-            else:
                 await websocket.close()
                 return
+
+            # Si envían user_id, debe coincidir con el token; si no, usamos el del token
+            user_id = session_data.get("user_id")
+            if requested_user_id is not None and int(requested_user_id) != int(user_id):
+                await websocket.send(json.dumps({
+                    "type": "auth_error",
+                    "message": "El usuario no coincide con la sesión"
+                }))
+                await websocket.close()
+                return
+
+            await websocket_manager.connect(websocket, int(user_id))
+            logging.info(f"Usuario {user_id} conectado via WebSocket desde {websocket.remote_address}")
+
+            await websocket.send(json.dumps({
+                "type": "auth_success",
+                "message": "Conexión WebSocket establecida",
+                "user_id": int(user_id)
+            }))
+        else:
+            await websocket.send(json.dumps({
+                "type": "auth_error",
+                "message": "Mensaje de autenticación inválido"
+            }))
+            await websocket.close()
+            return
         
         # Mantener conexión activa
         async for message in websocket:

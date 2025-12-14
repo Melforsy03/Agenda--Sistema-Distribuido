@@ -64,8 +64,16 @@ class HierarchyService:
             return None, "Conflicto en agenda del líder"
         
         # Crear evento
-        event_id = self.db.add_event(title, description, start_time, end_time, 
-                                   creator_id, group_id, True)
+        event_id = self.db.add_event(
+            title,
+            description,
+            start_time,
+            end_time,
+            creator_id,
+            group_id,
+            True,
+            is_hierarchical_event=True,
+        )
         
         if not event_id:
             return None, "Error al crear evento"
@@ -73,27 +81,56 @@ class HierarchyService:
         # Añadir automáticamente a todos los miembros del grupo
         members = self.db.get_group_members(group_id)
         added_count = 0
+        conflict_count = 0
         
         for member_id, username in members:
             if member_id != creator_id:
-                # Verificar conflictos antes de añadir
-                if not self.db.check_conflict(member_id, start_time, end_time):
-                    self.db.add_participant_to_event(event_id, member_id, True)  # Aceptado automáticamente
-                    added_count += 1
-                    
-                    # Notificar al miembro
-                    await websocket_manager.send_to_user(member_id, {
-                        "type": "hierarchical_event_added",
+                has_conflict = False
+                try:
+                    has_conflict = self.db.check_conflict(member_id, start_time, end_time)
+                except Exception:
+                    has_conflict = False
+
+                # Se impone igualmente: aparece en la agenda, pero se registra el conflicto.
+                self.db.add_participant_to_event(event_id, member_id, True)
+                added_count += 1
+
+                if has_conflict:
+                    conflict_count += 1
+                    self.db.add_event_conflict(
+                        event_id,
+                        member_id,
+                        reason="Conflicto detectado con otro evento existente (evento jerárquico)",
+                    )
+                    logging.warning(f"Conflicto de horario para usuario {member_id} en evento jerárquico {event_id}")
+
+                # Notificar al miembro
+                await websocket_manager.send_to_user(member_id, {
+                    "type": "hierarchical_event_added",
+                    "event_id": event_id,
+                    "title": title,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "group_id": group_id,
+                    "has_conflict": has_conflict,
+                })
+
+                # Notificar al líder si hubo conflicto
+                if has_conflict:
+                    await websocket_manager.send_to_user(creator_id, {
+                        "type": "member_conflict",
                         "event_id": event_id,
-                        "title": title,
+                        "member_id": member_id,
+                        "member_name": username,
                         "start_time": start_time,
                         "end_time": end_time,
-                        "group_id": group_id
+                        "message": f"Conflicto de horario detectado para {username} en el evento jerárquico '{title}'",
                     })
-                else:
-                    logging.warning(f"Conflicto de horario para usuario {member_id}")
         
         # Añadir creador al evento
         self.db.add_participant_to_event(event_id, creator_id, True)
         
-        return event_id, f"Evento creado y aplicado a {added_count + 1} miembros"
+        total = added_count + 1
+        if conflict_count:
+            return event_id, f"Evento creado y aplicado a {total} miembros ({conflict_count} con conflicto)"
+        return event_id, f"Evento creado y aplicado a {total} miembros"

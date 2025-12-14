@@ -30,7 +30,7 @@ class WebSocketClient:
             atexit.register(self._sync_cleanup)
             self._cleanup_registered = True
         
-    async def connect(self, user_id):
+    async def connect(self, user_id, token: str):
         """Connect to the WebSocket server"""
         try:
             self.websocket = await websockets.connect(self.url)
@@ -39,7 +39,8 @@ class WebSocketClient:
             # Authenticate with the server
             auth_message = {
                 "type": "auth",
-                "user_id": user_id
+                "user_id": user_id,
+                "token": token,
             }
             await self.websocket.send(json.dumps(auth_message))
             

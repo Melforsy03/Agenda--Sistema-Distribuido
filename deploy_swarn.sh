@@ -9,6 +9,7 @@ DATA_VOLUME="agenda_data"
 BACKEND_IMAGE="agenda_backend"
 FRONTEND_IMAGE="agenda_frontend"
 PYTHONPATH_VALUE="/app:/app/backend"
+FRONTEND_PYTHONPATH="/app/front:/app"
 
 BACKEND_PORT_API=8766
 BACKEND_PORT_WS=8767
@@ -249,7 +250,7 @@ if [[ "$NODE_ROLE" == "manager" ]]; then
       --hostname frontend \
       --network $NETWORK_NAME \
       -p ${FRONTEND_PORT}:${FRONTEND_PORT} \
-      -e PYTHONPATH=${PYTHONPATH_VALUE} \
+      -e PYTHONPATH=${FRONTEND_PYTHONPATH} \
       -e API_BASE_URL=http://backend:${BACKEND_PORT_API} \
       -e WEBSOCKET_HOST=backend \
       -e WEBSOCKET_PORT=${BACKEND_PORT_WS} \
@@ -271,7 +272,7 @@ else
     --hostname frontend \
     --network $NETWORK_NAME \
     -p ${FRONTEND_PORT}:${FRONTEND_PORT} \
-    -e PYTHONPATH=${PYTHONPATH_VALUE} \
+    -e PYTHONPATH=${FRONTEND_PYTHONPATH} \
     -e API_URL=http://backend:${BACKEND_PORT_API} \
     -e API_BASE_URL=http://backend:${BACKEND_PORT_API} \
     -e WEBSOCKET_HOST=backend \

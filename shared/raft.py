@@ -61,9 +61,10 @@ class RaftNode:
         # Para líderes
         self.next_index: Dict[str, int] = {}
         self.match_index: Dict[str, int] = {}
-        self.peer_health: Dict[str, float] = {peer: 0.0 for peer in peers}
+        self.peer_health: Dict[str, float] = {}
         self.peer_health_window = 5.0  # segundos para considerar un peer "vivo"
         self.replication_factor = max(1, min(len(peers) + 1, replication_factor or len(peers) + 1))
+        self._set_peers(peers, persist=False)
 
         # Prioridad para Bully (derivada del URL/ID numérico)
         self.priority = self._priority_of_url(self.self_url)
@@ -107,6 +108,8 @@ class RaftNode:
             "log": [e.to_dict() for e in self.log],
             "commit_index": self.commit_index,
             "last_applied": self.last_applied,
+            "peers": self.peers,
+            "replication_factor": self.replication_factor,
         }
         try:
             with open(self.state_file, "w") as f:
@@ -133,6 +136,12 @@ class RaftNode:
                 
                 self.commit_index = state.get("commit_index", 0)
                 self.last_applied = state.get("last_applied", 0)
+                loaded_peers = state.get("peers")
+                if loaded_peers:
+                    self._set_peers(loaded_peers, persist=False)
+                rep = state.get("replication_factor")
+                if rep:
+                    self.replication_factor = max(1, rep)
                 logger.info(f"✅ Estado cargado: término {self.current_term}, {len(self.log)} entradas")
             except Exception as e:
                 logger.error(f"Error cargando estado: {e}")
@@ -165,6 +174,28 @@ class RaftNode:
         """Peers con prioridad mayor que la nuestra (Bully)."""
         my_prio = self.priority
         return [p for p in self.peers if self._priority_of_url(p) > my_prio]
+
+    def _set_peers(self, peers: List[str], persist: bool = True):
+        """Actualiza peers en memoria (y opcionalmente persiste)."""
+        filtered = [p for p in peers if p and p != self.self_url]
+        self.peers = filtered
+        # Mantener salud previa si existe
+        self.peer_health = {p: self.peer_health.get(p, 0.0) for p in self.peers}
+        # Ajustar factor de replicación sin exceder cluster
+        self.replication_factor = max(1, min(len(self.peers) + 1, self.replication_factor or len(self.peers) + 1))
+        # Reconfigurar estructuras de líder
+        if self.is_leader():
+            self.next_index = {p: len(self.log) + 1 for p in self.peers}
+            self.match_index = {p: 0 for p in self.peers}
+        if persist:
+            self.save_state()
+
+    async def update_peers(self, peers: List[str], replication_factor: Optional[int] = None):
+        """Actualiza peers de forma dinámica con lock."""
+        async with self._lock:
+            if replication_factor:
+                self.replication_factor = max(1, replication_factor)
+            self._set_peers(peers, persist=True)
 
     def _quorum_size(self) -> int:
         """Quórum dinámico basado en peers activos.
@@ -220,6 +251,8 @@ class RaftNode:
             # Empuja estado a peers vivos y detecta rezagos
             for peer in self.peers:
                 await self._sync_peer_state(peer)
+                # Además, si el peer tiene entradas que nosotros no, intente reconciliarlas
+                await self._reconcile_from_peer(peer)
 
     async def _apply_committed_entries(self):
         """Aplica las entradas comprometidas a la máquina de estado"""
@@ -497,6 +530,55 @@ class RaftNode:
             await self._replicate_entry_to_peer(peer, self.log[-1])
         except Exception as e:
             logger.warning(f"Error curando peer {peer}: {e}")
+
+    async def _reconcile_from_peer(self, peer: str):
+        """Trae entradas que el peer tenga y el líder no, y las replica al resto.
+
+        Política simple: se consideran nuevas las entradas cuyo par (term, command)
+        no exista en nuestro log. Se incorporan en el líder y luego se replican
+        al resto. Esto permite que un nodo aislado aporte escrituras al reunirse.
+        """
+        if not self.is_leader():
+            return
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                async with session.get(f"{peer}/raft/log/full") as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json()
+                    peer_entries = data.get("entries", [])
+        except Exception as e:
+            logger.warning(f"Error obteniendo log completo de {peer}: {e}")
+            return
+
+        if not peer_entries:
+            return
+
+        existing_keys = {(e.term, e.command) for e in self.log}
+        new_entries = []
+        for entry_data in peer_entries:
+            key = (entry_data.get("term"), entry_data.get("command"))
+            if key in existing_keys:
+                continue
+            entry = LogEntry.from_dict(entry_data)
+            new_entries.append(entry)
+            existing_keys.add(key)
+
+        if not new_entries:
+            return
+
+        logger.info(f"🔄 Reconciliando {len(new_entries)} entradas nuevas desde {peer}")
+        for entry in new_entries:
+            # Incorporar entrada al líder
+            entry.index = len(self.log) + 1
+            self.log.append(entry)
+            self.commit_index = max(self.commit_index, entry.index)
+            self.last_applied = self.commit_index
+            self.save_state()
+            # Aplicar al estado local
+            await self.apply_to_state_machine(entry)
+            # Replicar al resto
+            await self.replicate_log(entry)
 
     async def _recover_from_peers(self):
         """Cuando nos volvemos líder, buscamos el log más avanzado en los peers y lo adoptamos."""

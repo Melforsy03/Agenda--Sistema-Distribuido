@@ -10,7 +10,7 @@ from ui.calendar_view import show_calendar_view
 from ui.event_view import show_events_view
 from ui.group_view import show_groups_view
 from ui.invitations_view import show_invitations_view
-from ui.notifications_view import show_notifications_view
+from ui.notifications_view import show_notifications_view, ensure_notification_state
 from services.api_client import APIClient
 from services.websocket_client import WebSocketClient
 

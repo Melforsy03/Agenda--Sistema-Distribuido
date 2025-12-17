@@ -71,8 +71,17 @@ class APIClient:
         return self._make_request("POST", "/groups", json=data, params={"token": token})
     
     def list_user_groups(self, token: str):
-        """List groups for current user"""
-        return self._make_request("GET", "/groups", params={"token": token})
+        """List groups for current user (normalized as tuples)"""
+        raw = self._make_request("GET", "/groups", params={"token": token})
+        # Backend devuelve lista de dicts; convertimos a (id, name, is_hierarchical)
+        groups = []
+        for g in raw or []:
+            gid = g.get("id") if isinstance(g, dict) else None
+            name = g.get("name") if isinstance(g, dict) else str(g)
+            is_hier = g.get("is_hierarchical", False) if isinstance(g, dict) else False
+            if gid is not None and name is not None:
+                groups.append((gid, name, is_hier))
+        return groups
     
     def list_group_members(self, group_id: int, token: str):
         """List members of a group"""
@@ -88,9 +97,9 @@ class APIClient:
         return self._make_request("GET", "/groups/invitations", params={"token": token})
     
     def respond_to_group_invitation(self, invitation_id: int, response: str, token: str):
-        """Respond to a group invitation"""
-        data = {"invitation_id": invitation_id, "response": response}
-        return self._make_request("POST", "/groups/invitations/respond", json=data, params={"token": token})
+        """Respond to a group invitation (query params per API contract)"""
+        params = {"token": token, "invitation_id": invitation_id, "response": response}
+        return self._make_request("POST", "/groups/invitations/respond", params=params)
     
     def get_pending_invitations_count(self, token: str):
         """Get count of pending group invitations"""
@@ -197,9 +206,9 @@ class APIClient:
         return self._make_request("GET", "/events/invitations", params={"token": token})
     
     def respond_to_event_invitation(self, event_id: int, accepted: bool, token: str):
-        """Respond to an event invitation"""
-        data = {"event_id": event_id, "accepted": accepted}
-        return self._make_request("POST", "/events/invitations/respond", json=data, params={"token": token})
+        """Respond to an event invitation (query params per API contract)"""
+        params = {"token": token, "event_id": event_id, "accepted": accepted}
+        return self._make_request("POST", "/events/invitations/respond", params=params)
     
     def get_pending_event_invitations_count(self, token: str):
         """Get count of pending event invitations"""

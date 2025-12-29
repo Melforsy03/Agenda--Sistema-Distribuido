@@ -11,11 +11,23 @@ def show_calendar_view(user_id, api_client, token):
         events = api_client.get_user_events(token)
         calendar_events = []
         for e in events:
-            calendar_events.append({
-                "title": e[0],
-                "start": e[2],
-                "end": e[3],
-            })
+            # Soporta respuestas como dict (distribuido) o tupla (backend monolito)
+            if isinstance(e, dict):
+                title = e.get("title")
+                start = e.get("start_time")
+                end = e.get("end_time")
+            else:
+                try:
+                    title, _, start, end, *_ = e
+                except Exception:
+                    # salto si el formato no es reconocido
+                    continue
+            if title and start and end:
+                calendar_events.append({
+                    "title": title,
+                    "start": start,
+                    "end": end,
+                })
 
         calendar_options = {
             "headerToolbar": {

@@ -179,6 +179,17 @@ async def apply_log_entry(entry):
             "INSERT OR IGNORE INTO group_members (group_id, user_id, username, is_leader) VALUES (?, ?, ?, 1)",
             (gid, p.get("creator_id"), p.get("creator_username"))
         )
+        # Crear invitaciones para miembros iniciales (opcional) enviados en payload
+        for mid in p.get("members") or []:
+            if mid == p.get("creator_id"):
+                continue
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO group_invitations (group_id, invited_user_id, invited_username, inviter_id, status)
+                VALUES (?, ?, ?, ?, 'pending')
+                """,
+                (gid, mid, "", p.get("creator_id")),
+            )
         conn.commit()
     elif t == "INVITE_USER" and "GRUPOS" in SHARD_NAME:
         cursor.execute("""

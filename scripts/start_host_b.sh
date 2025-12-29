@@ -11,6 +11,12 @@ COORD_IP=${COORD_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8502}
 
+# Parar y eliminar contenedores previos usados por este host
+docker rm -f frontend_b \
+  raft_events_nz_3 raft_events_nz_4 \
+  raft_groups_2 raft_groups_3 \
+  raft_users_2 raft_users_3 2>/dev/null || true
+
 if [[ -z "$COORD_IP" ]]; then
   echo "❌ Debes exportar COORD_IP. Ej: COORD_IP=192.168.171.112" >&2
   exit 1
@@ -43,6 +49,9 @@ run_node raft_groups_2    8808 GRUPOS      "http://raft_groups_1:8807"
 run_node raft_groups_3    8809 GRUPOS      "http://raft_groups_1:8807,http://raft_groups_2:8808"
 run_node raft_users_2     8811 USUARIOS    "http://raft_users_1:8810"
 run_node raft_users_3     8812 USUARIOS    "http://raft_users_1:8810,http://raft_users_2:8811"
+
+# Nodo extra opcional en NZ para quorum amplio si no existe (descomentar si lo quieres en host B)
+# run_node raft_events_nz_4 8814 EVENTOS_N_Z "http://raft_events_nz_1:8804,http://raft_events_nz_2:8805,http://raft_events_nz_3:8806"
 
 echo "🎨 Lanzando frontend en Host B..."
 docker rm -f frontend_b 2>/dev/null || true

@@ -9,6 +9,16 @@ set -euo pipefail
 #   FRONT_PORT  (default 8501)
 #   WS_PORT     (default 8768, mapea al 8767 interno del coordinador)
 
+# Limpiar posibles configs sucias de shards en el entorno
+unset SHARDS_CONFIG_JSON SHARD_GROUPS SHARD_GRUPOS SHARD_USERS SHARD_USUARIOS
+unset SHARD_EVENTOS_A_M SHARD_EVENTOS_N_Z SHARD_EVENTS_A_M SHARD_EVENTS_N_Z
+
+# Parar y eliminar contenedores previos que vamos a reutilizar
+docker rm -f coordinator frontend_a \
+  raft_events_am_1 raft_events_am_2 raft_events_am_3 \
+  raft_events_nz_1 raft_events_nz_2 raft_events_nz_4 \
+  raft_groups_1 raft_users_1 2>/dev/null || true
+
 HOST_B_IP=${HOST_B_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8501}
@@ -28,8 +38,8 @@ fi
 SELF_IP=$(hostname -I | awk '{print $1}')
 
 # URLs por shard (nombres de contenedor + puertos internos)
-EVENTS_AM=("http://raft_events_am_1:8801" "http://raft_events_am_2:8802")
-EVENTS_NZ=("http://raft_events_nz_1:8804" "http://raft_events_nz_2:8805" "http://raft_events_nz_3:8806")
+EVENTS_AM=("http://raft_events_am_1:8801" "http://raft_events_am_2:8802" "http://raft_events_am_3:8803")
+EVENTS_NZ=("http://raft_events_nz_1:8804" "http://raft_events_nz_2:8805" "http://raft_events_nz_3:8806" "http://raft_events_nz_4:8814")
 GROUPS=("http://raft_groups_1:8807" "http://raft_groups_2:8808" "http://raft_groups_3:8809")
 USERS=("http://raft_users_1:8810" "http://raft_users_2:8811" "http://raft_users_3:8812")
 
@@ -52,8 +62,10 @@ run_node() {
 echo "🚀 Lanzando nodos en Host A..."
 run_node raft_events_am_1 8801 EVENTOS_A_M "http://raft_events_am_2:8802" "http://coordinator:8700" raft_data_am1
 run_node raft_events_am_2 8802 EVENTOS_A_M "http://raft_events_am_1:8801" "http://coordinator:8700" raft_data_am2
-run_node raft_events_nz_1 8804 EVENTOS_N_Z "http://raft_events_nz_2:8805,http://raft_events_nz_3:8806" "http://coordinator:8700" raft_data_nz1
-run_node raft_events_nz_2 8805 EVENTOS_N_Z "http://raft_events_nz_1:8804,http://raft_events_nz_3:8806" "http://coordinator:8700" raft_data_nz2
+run_node raft_events_am_3 8803 EVENTOS_A_M "http://raft_events_am_1:8801,http://raft_events_am_2:8802" "http://coordinator:8700" raft_data_am3
+run_node raft_events_nz_1 8804 EVENTOS_N_Z "http://raft_events_nz_2:8805,http://raft_events_nz_3:8806,http://raft_events_nz_4:8814" "http://coordinator:8700" raft_data_nz1
+run_node raft_events_nz_2 8805 EVENTOS_N_Z "http://raft_events_nz_1:8804,http://raft_events_nz_3:8806,http://raft_events_nz_4:8814" "http://coordinator:8700" raft_data_nz2
+run_node raft_events_nz_4 8814 EVENTOS_N_Z "http://raft_events_nz_1:8804,http://raft_events_nz_2:8805,http://raft_events_nz_3:8806" "http://coordinator:8700" raft_data_nz4
 run_node raft_groups_1    8807 GRUPOS      "http://raft_groups_2:8808,http://raft_groups_3:8809" "http://coordinator:8700" raft_data_groups1
 run_node raft_users_1     8810 USUARIOS    "http://raft_users_2:8811,http://raft_users_3:8812" "http://coordinator:8700" raft_data_users1
 
@@ -62,6 +74,11 @@ docker rm -f coordinator 2>/dev/null || true
 docker run -d --name coordinator --network "$NETWORK" \
   -p 8700:8700 -p ${WS_PORT}:8767 \
   -e PYTHONPATH="/app:/app/backend" \
+  -e SHARDS_CONFIG_JSON="" \
+  -e SHARD_EVENTOS_A_M="$(IFS=,; echo "${EVENTS_AM[*]}")" \
+  -e SHARD_EVENTOS_N_Z="$(IFS=,; echo "${EVENTS_NZ[*]}")" \
+  -e SHARD_GROUPS="$(IFS=,; echo "${GROUPS[*]}")" \
+  -e SHARD_USERS="$(IFS=,; echo "${USERS[*]}")" \
   -e SHARD_EVENTS_A_M="$(IFS=,; echo "${EVENTS_AM[*]}")" \
   -e SHARD_EVENTS_N_Z="$(IFS=,; echo "${EVENTS_NZ[*]}")" \
   -e SHARD_GROUPS="$(IFS=,; echo "${GROUPS[*]}")" \

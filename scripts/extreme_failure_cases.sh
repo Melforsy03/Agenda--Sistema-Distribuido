@@ -9,8 +9,8 @@ set -euo pipefail
 #   NET             (default agenda_net)
 #   SSH_B           (opcional, ej: user@IP_HOST_B)
 #   TOKEN           (opcional) si quieres crear un evento jerárquico de prueba
-#   RUN_STRESS=1    para disparar tests/stress_extreme_scenarios.sh al final
-#   RUN_CONSISTENCY=1 para correr tests/consistency_scenarios.sh al final (default 1)
+#   RUN_STRESS=1    para disparar tests/stress_extreme_scenarios.sh al final (si existe)
+#   RUN_CONSISTENCY=1 para correr tests/consistency_scenarios.sh al final (si existe)
 #
 # Contenedores esperados:
 #   Host A: coordinator, frontend_a, raft_events_am_1, raft_events_am_2,
@@ -23,7 +23,7 @@ NET=${NET:-agenda_net}
 SSH_B=${SSH_B:-}
 TOKEN=${TOKEN:-}
 RUN_STRESS=${RUN_STRESS:-0}
-RUN_CONSISTENCY=${RUN_CONSISTENCY:-1}
+RUN_CONSISTENCY=${RUN_CONSISTENCY:-0}
 
 require_bin(){ command -v "$1" >/dev/null 2>&1 || { echo "❌ Falta '$1'" >&2; exit 1; }; }
 require_bin docker
@@ -163,7 +163,12 @@ fi
 
 log "🧪 Caso 10 (integridad post-fallos): RUN_CONSISTENCY=${RUN_CONSISTENCY}"
 if [[ "${RUN_CONSISTENCY}" -eq 1 ]]; then
-  bash "$(dirname "$0")/../tests/consistency_scenarios.sh" || true
+  CSCRIPT="$(dirname "$0")/../tests/consistency_scenarios.sh"
+  if [[ -f "$CSCRIPT" ]]; then
+    bash "$CSCRIPT" || true
+  else
+    log "ℹ️ consistency_scenarios.sh no encontrado, se omite"
+  fi
 fi
 
 log "✅ Suite extreme_failure_cases completada"

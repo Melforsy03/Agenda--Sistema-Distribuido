@@ -127,6 +127,14 @@ def _parse_nodes(raw: str):
     """Convierte una lista separada por comas en URLs limpias."""
     return [node.strip() for node in raw.split(",") if node.strip()]
 
+def _filter_valid_nodes(nodes: list[str]) -> list[str]:
+    """Descarta entradas que no sean URLs http(s) válidas."""
+    valid = []
+    for n in nodes:
+        if isinstance(n, str) and (n.startswith("http://") or n.startswith("https://")):
+            valid.append(n)
+    return valid
+
 
 def load_shards_from_env() -> dict:
     """Permite definir shards y nodos vía variables de entorno para escalar sin tocar código.
@@ -174,6 +182,10 @@ def load_shards_from_env() -> dict:
     # Completar con defaults cuando no hay override
     for shard, nodes in DEFAULT_SHARDS.items():
         shards.setdefault(shard, nodes)
+
+    # Filtrar nodos inválidos (no http/https)
+    for shard, nodes in list(shards.items()):
+        shards[shard] = _filter_valid_nodes(nodes)
 
     return shards
 

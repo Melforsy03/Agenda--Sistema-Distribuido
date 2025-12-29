@@ -471,6 +471,7 @@ async def create_event(event: EventCreate, token: str):
     payload["creator_id"] = user_id
     payload["creator_username"] = username
     # Validar grupo y miembros si aplica
+    members = None
     if event.group_id:
         members = await _get_group_member_ids(event.group_id)
         if user_id not in members:
@@ -479,6 +480,12 @@ async def create_event(event: EventCreate, token: str):
             invalid = [pid for pid in event.participants_ids if pid not in members]
             if invalid:
                 raise HTTPException(status_code=400, detail="Hay participantes que no pertenecen al grupo")
+        # Si es jerárquico, forzar que todos los miembros queden como participantes (sin aceptar manual)
+        if event.is_hierarchical:
+            payload["participants_ids"] = [uid for uid in members]  # incluye creador, se marcará aceptado
+
+    # Lista de participantes finales para notificar
+    participants = payload.get("participants_ids") or []
 
     try:
         leader_url = await get_leader(shard_name)
@@ -487,8 +494,7 @@ async def create_event(event: EventCreate, token: str):
         data = resp.json()
         if data.get("error"):
             raise HTTPException(status_code=400, detail=data["error"])
-        # Notificar a participantes pendientes
-        participants = event.participants_ids or []
+        # Notificar a participantes (informativo; jerárquicos ya quedan aceptados)
         for pid in participants:
             if pid != user_id:
                 asyncio.create_task(ws_manager.send_to_user(pid, {

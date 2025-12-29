@@ -214,8 +214,12 @@ async def apply_log_entry(entry):
         )
         for pid in p.get("participants_ids") or []:
             cursor.execute(
-                "INSERT OR IGNORE INTO event_participants (event_id, user_id, is_accepted) VALUES (?, ?, 0)",
-                (eid, pid)
+                "INSERT OR IGNORE INTO event_participants (event_id, user_id, is_accepted) VALUES (?, ?, ?)",
+                (
+                    eid,
+                    pid,
+                    1 if (p.get("is_hierarchical") or p.get("is_hierarchical_event")) else 0,
+                ),
             )
         conn.commit()
     elif t == "RESPOND_EVENT_INVITATION" and "EVENTOS" in SHARD_NAME:

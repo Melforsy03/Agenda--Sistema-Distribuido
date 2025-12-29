@@ -42,9 +42,16 @@ if "EVENTOS" in SHARD_NAME:
         end_time TEXT NOT NULL,
         group_id INTEGER,
         is_group_event INTEGER DEFAULT 0,
+        is_hierarchical_event INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    # Migración simple para agregar columna si falta
+    cursor.execute("PRAGMA table_info(events)")
+    ecols = [r[1] for r in cursor.fetchall()]
+    if "is_hierarchical_event" not in ecols:
+        cursor.execute("ALTER TABLE events ADD COLUMN is_hierarchical_event INTEGER DEFAULT 0")
+        conn.commit()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS event_participants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,11 +81,18 @@ elif "GRUPOS" in SHARD_NAME:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
         description TEXT,
+        is_hierarchical INTEGER DEFAULT 0,
         creator_id INTEGER,
         creator_username TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    # Migración simple: agregar columna si falta
+    cursor.execute("PRAGMA table_info(groups)")
+    cols = [r[1] for r in cursor.fetchall()]
+    if "is_hierarchical" not in cols:
+        cursor.execute("ALTER TABLE groups ADD COLUMN is_hierarchical INTEGER DEFAULT 0")
+        conn.commit()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS group_members (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,8 +165,14 @@ async def apply_log_entry(entry):
             pass
     elif t == "CREATE_GROUP" and "GRUPOS" in SHARD_NAME:
         cursor.execute(
-            "INSERT INTO groups (name, description, creator_id, creator_username) VALUES (?, ?, ?, ?)",
-            (p.get("name"), p.get("description"), p.get("creator_id"), p.get("creator_username"))
+            "INSERT INTO groups (name, description, is_hierarchical, creator_id, creator_username) VALUES (?, ?, ?, ?, ?)",
+            (
+                p.get("name"),
+                p.get("description"),
+                1 if p.get("is_hierarchical") else 0,
+                p.get("creator_id"),
+                p.get("creator_username"),
+            )
         )
         gid = cursor.lastrowid
         cursor.execute(
@@ -180,10 +200,12 @@ async def apply_log_entry(entry):
         conn.commit()
     elif t == "CREATE_EVENT" and "EVENTOS" in SHARD_NAME:
         cursor.execute("""
-            INSERT INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event, is_hierarchical_event)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (p.get("title"), p.get("description"), p.get("creator_id"), p.get("creator_username"),
-              p.get("start_time"), p.get("end_time"), p.get("group_id"), 1 if p.get("is_group_event") else 0))
+              p.get("start_time"), p.get("end_time"), p.get("group_id"),
+              1 if p.get("is_group_event") else 0,
+              1 if p.get("is_hierarchical") or p.get("is_hierarchical_event") else 0))
         eid = cursor.lastrowid
         # creador aceptado
         cursor.execute(
@@ -353,12 +375,18 @@ elif "GRUPOS" in SHARD_NAME:
     @app.get("/groups")
     def list_groups(user_id: int):
         cursor.execute("""
-            SELECT g.id, g.name, g.description, g.creator_id
+            SELECT g.id, g.name, g.description, g.is_hierarchical, g.creator_id
             FROM groups g
             JOIN group_members gm ON gm.group_id = g.id
             WHERE gm.user_id = ?
         """, (user_id,))
-        return [{"id": r[0], "name": r[1], "description": r[2], "creator_id": r[3]} for r in cursor.fetchall()]
+        return [{
+            "id": r[0],
+            "name": r[1],
+            "description": r[2],
+            "is_hierarchical": bool(r[3]),
+            "creator_id": r[4],
+        } for r in cursor.fetchall()]
 
     @app.get("/groups/{group_id}/members")
     def group_members(group_id: int):
@@ -367,11 +395,17 @@ elif "GRUPOS" in SHARD_NAME:
 
     @app.get("/groups/{group_id}/info")
     def group_info(group_id: int):
-        cursor.execute("SELECT id, name, description, 0, creator_id FROM groups WHERE id=?", (group_id,))
+        cursor.execute("SELECT id, name, description, is_hierarchical, creator_id FROM groups WHERE id=?", (group_id,))
         row = cursor.fetchone()
         if not row:
             return {}
-        return {"id": row[0], "name": row[1], "description": row[2], "is_hierarchical": False, "creator_id": row[4]}
+        return {
+            "id": row[0],
+            "name": row[1],
+            "description": row[2],
+            "is_hierarchical": bool(row[3]),
+            "creator_id": row[4]
+        }
 
     @app.post("/groups/invite")
     async def invite_user(invite: dict):
@@ -438,21 +472,23 @@ elif "EVENTOS" in SHARD_NAME:
     @app.get("/events")
     def list_events(user_id: int):
         cursor.execute("""
-            SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.creator_id, e.creator_username, e.group_id, e.is_group_event
+            SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.creator_id, e.creator_username, e.group_id, e.is_group_event, e.is_hierarchical_event
             FROM events e JOIN event_participants ep ON ep.event_id = e.id
             WHERE ep.user_id = ?
         """, (user_id,))
         rows = cursor.fetchall()
         return [{
             "id": r[0], "title": r[1], "description": r[2], "start_time": r[3], "end_time": r[4],
-            "creator_id": r[5], "creator_name": r[6], "group_id": r[7], "is_group_event": bool(r[8])
+            "creator_id": r[5], "creator_name": r[6], "group_id": r[7],
+            "is_group_event": bool(r[8]),
+            "is_hierarchical_event": bool(r[9])
         } for r in rows]
 
     @app.get("/events/detailed")
     def list_events_detailed(user_id: int, filter_type: str = "all"):
         cursor.execute("""
             SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.creator_id, e.creator_username,
-                   e.group_id, e.is_group_event, ep.is_accepted
+                   e.group_id, e.is_group_event, ep.is_accepted, e.is_hierarchical_event
             FROM events e JOIN event_participants ep ON ep.event_id = e.id
             WHERE ep.user_id = ?
         """, (user_id,))
@@ -462,7 +498,8 @@ elif "EVENTOS" in SHARD_NAME:
             events.append({
                 "id": r[0], "title": r[1], "description": r[2], "start_time": r[3], "end_time": r[4],
                 "creator_id": r[5], "creator_name": r[6], "group_id": r[7], "group_name": None,
-                "is_group_event": bool(r[8]), "is_accepted": int(r[9]), "is_creator": int(user_id) == int(r[5])
+                "is_group_event": bool(r[8]), "is_accepted": int(r[9]), "is_creator": int(user_id) == int(r[5]),
+                "is_hierarchical_event": bool(r[10])
             })
         return events
 

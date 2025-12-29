@@ -2,9 +2,12 @@ import streamlit as st
 from streamlit_calendar import calendar
 import asyncio
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 def show_calendar_view(user_id, api_client, token):
     st.header("📅 Mi calendario")
+    # Auto refresh cada 15s para reflejar cambios sin recargar toda la app
+    st_autorefresh(interval=15000, key="calendar_autorefresh")
 
     # Solo mostrar la vista de calendario
     try:

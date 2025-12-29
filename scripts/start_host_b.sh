@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Arranca servicios en el host B (réplicas adicionales + frontend).
+# Arranca el host B: réplicas adicionales y frontend B.
 # Variables:
 #   COORD_IP    (obligatorio) IP del coordinador principal en host A.
-#   NETWORK     (opcional) nombre de la red. Default: agenda_net
-#   FRONT_PORT  (opcional) puerto host para frontend B. Default: 8502
+#   NETWORK     (default agenda_net)
+#   FRONT_PORT  (default 8502)
 
 COORD_IP=${COORD_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8502}
 
 if [[ -z "$COORD_IP" ]]; then
-  echo "❌ Debes exportar COORD_IP con la IP del coordinador principal. Ej: COORD_IP=192.168.171.112" >&2
+  echo "❌ Debes exportar COORD_IP. Ej: COORD_IP=192.168.171.112" >&2
   exit 1
 fi
 
-# Red
 if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
   docker network create --driver overlay --attachable "$NETWORK" || docker network create "$NETWORK"
 fi
 
-echo "➡️  Host B: coordinador en $COORD_IP"
+SELF_IP=$(hostname -I | awk '{print $1}')
+echo "➡️ Host B apuntando a coordinador en $COORD_IP | red $NETWORK | IP local $SELF_IP"
 
 run_node() {
   local name=$1 port=$2 shard=$3 peers=$4
@@ -54,4 +54,4 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -e WEBSOCKET_PORT=8767 \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
-echo "✅ Host B listo. Accede al front en http://$(hostname -I | awk '{print $1}'):${FRONT_PORT}"
+echo "✅ Host B listo. Front: http://${SELF_IP}:${FRONT_PORT}"

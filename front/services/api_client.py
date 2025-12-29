@@ -89,8 +89,8 @@ class APIClient:
     
     def invite_user_to_group(self, group_id: int, invited_user_id: int, token: str):
         """Invite user to a group"""
-        data = {"group_id": group_id, "invited_user_id": invited_user_id}
-        return self._make_request("POST", "/groups/invite", json=data, params={"token": token})
+        params = {"token": token, "group_id": group_id, "invited_user_id": invited_user_id}
+        return self._make_request("POST", "/groups/invite", params=params)
     
     def get_pending_invitations(self, token: str):
         """Get pending group invitations"""

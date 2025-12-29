@@ -37,7 +37,21 @@ def show_group_invitations(user_id, api_client, token):
             return
 
         for inv in invitations:
-            inv_id, group_name, inviter_name, created_at, group_id = inv
+            # Backend devuelve dicts; mantenemos compatibilidad si llega una tupla
+            if isinstance(inv, dict):
+                inv_id = inv.get("id")
+                group_id = inv.get("group_id")
+                inviter_id = inv.get("inviter_id")
+                invited_username = inv.get("invited_username", "")
+                created_at = inv.get("created_at", "")
+                group_name = f"Grupo {group_id}" if group_id is not None else "Grupo"
+                inviter_name = f"Usuario {inviter_id}" if inviter_id is not None else "Desconocido"
+            else:
+                try:
+                    inv_id, group_name, inviter_name, created_at, group_id = inv
+                except Exception:
+                    st.warning(f"Formato de invitación no reconocido: {inv}")
+                    continue
             with st.container():
                 st.markdown(f"### 🏢 {group_name}")
                 st.markdown(f"**Invitado por:** {inviter_name}")

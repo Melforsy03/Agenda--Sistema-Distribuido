@@ -11,9 +11,10 @@ COORD_IP=${COORD_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8502}
 
-# Parar y eliminar contenedores previos usados por este host
+# Parar y eliminar contenedores previos usados por este host (solo nodos 3 por shard)
 docker rm -f frontend_b \
-  raft_events_nz_3 raft_events_nz_4 \
+  raft_events_am_3 \
+  raft_events_nz_3 \
   raft_groups_2 raft_groups_3 \
   raft_users_2 raft_users_3 2>/dev/null || true
 
@@ -29,6 +30,15 @@ fi
 SELF_IP=$(hostname -I | awk '{print $1}')
 echo "➡️ Host B apuntando a coordinador en $COORD_IP | red $NETWORK | IP local $SELF_IP"
 
+EVENTS_AM_NAMES=(raft_events_am_1 raft_events_am_2 raft_events_am_3)
+EVENTS_AM_PORTS=(8801 8802 8803)
+EVENTS_NZ_NAMES=(raft_events_nz_1 raft_events_nz_2 raft_events_nz_3)
+EVENTS_NZ_PORTS=(8804 8805 8806)
+GROUPS_NAMES=(raft_groups_1 raft_groups_2 raft_groups_3)
+GROUPS_PORTS=(8807 8808 8809)
+USERS_NAMES=(raft_users_1 raft_users_2 raft_users_3)
+USERS_PORTS=(8810 8811 8812)
+
 run_node() {
   local name=$1 port=$2 shard=$3 peers=$4
   docker run -d --name "$name" --hostname "$name" --network "$NETWORK" -p "${port}:${port}" \
@@ -43,15 +53,30 @@ run_node() {
     agenda_backend uvicorn distributed.nodes.raft_node:app --host 0.0.0.0 --port "$port"
 }
 
-echo "🚀 Lanzando nodos en Host B..."
-run_node raft_events_nz_3 8806 EVENTOS_N_Z "http://raft_events_nz_1:8804,http://raft_events_nz_2:8805"
-run_node raft_groups_2    8808 GRUPOS      "http://raft_groups_1:8807"
-run_node raft_groups_3    8809 GRUPOS      "http://raft_groups_1:8807,http://raft_groups_2:8808"
-run_node raft_users_2     8811 USUARIOS    "http://raft_users_1:8810"
-run_node raft_users_3     8812 USUARIOS    "http://raft_users_1:8810,http://raft_users_2:8811"
+peers_for() {
+  local -n names=$1 ports=$2
+  local idx=$3
+  local peers=()
+  for j in "${!names[@]}"; do
+    if [[ $j -ne $idx ]]; then
+      peers+=("http://${names[$j]}:${ports[$j]}")
+    fi
+  done
+  IFS=,; echo "${peers[*]}"
+}
 
-# Nodo extra opcional en NZ para quorum amplio si no existe (descomentar si lo quieres en host B)
-# run_node raft_events_nz_4 8814 EVENTOS_N_Z "http://raft_events_nz_1:8804,http://raft_events_nz_2:8805,http://raft_events_nz_3:8806"
+echo "🚀 Lanzando nodos en Host B (nodo 3 por shard)..."
+peers=$(peers_for EVENTS_AM_NAMES EVENTS_AM_PORTS 2)
+run_node "${EVENTS_AM_NAMES[2]}" "${EVENTS_AM_PORTS[2]}" EVENTOS_A_M "$peers"
+
+peers=$(peers_for EVENTS_NZ_NAMES EVENTS_NZ_PORTS 2)
+run_node "${EVENTS_NZ_NAMES[2]}" "${EVENTS_NZ_PORTS[2]}" EVENTOS_N_Z "$peers"
+
+peers=$(peers_for GROUPS_NAMES GROUPS_PORTS 2)
+run_node "${GROUPS_NAMES[2]}" "${GROUPS_PORTS[2]}" GRUPOS "$peers"
+
+peers=$(peers_for USERS_NAMES USERS_PORTS 2)
+run_node "${USERS_NAMES[2]}" "${USERS_PORTS[2]}" USUARIOS "$peers"
 
 echo "🎨 Lanzando frontend en Host B..."
 docker rm -f frontend_b 2>/dev/null || true

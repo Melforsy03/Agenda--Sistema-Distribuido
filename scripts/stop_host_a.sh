@@ -8,10 +8,8 @@ containers=(
   frontend_a
   raft_events_am_1
   raft_events_am_2
-  raft_events_am_3
   raft_events_nz_1
   raft_events_nz_2
-  raft_events_nz_4
   raft_groups_1
   raft_users_1
 )

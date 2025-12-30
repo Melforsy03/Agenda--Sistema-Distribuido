@@ -5,8 +5,8 @@ set -euo pipefail
 
 containers=(
   frontend_b
+  raft_events_am_3
   raft_events_nz_3
-  raft_events_nz_4
   raft_groups_2
   raft_groups_3
   raft_users_2

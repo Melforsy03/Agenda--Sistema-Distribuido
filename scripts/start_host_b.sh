@@ -11,7 +11,7 @@ COORD_IP=${COORD_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8502}
 COORD_A_URL=${COORD_A_URL:-http://${COORD_IP}:8700}
-COORD_LB_URL=${COORD_LB_URL:-http://coordinator_lb:8700}
+COORD_LB_URL=${COORD_LB_URL:-${COORD_B_URL:-http://coordinator_b:8700}}
 LB_HOST=$(echo "$COORD_LB_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
 LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
 LB_PORT=${LB_PORT:-8700}
@@ -109,5 +109,15 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -e WEBSOCKET_HOST=${LB_HOST} \
   -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
+
+# Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores
+if [[ "${ENABLE_LB:-1}" == "1" ]]; then
+  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
+  SEEDS=${SEEDS:-"${COORD_A_URL},http://coordinator_b:8700"}
+  pkill -f "watch_coordinators.sh.*${SERVERS_FILE}" 2>/dev/null || true
+  OUT="$SERVERS_FILE" SEEDS="$SEEDS" INTERVAL="${LB_WATCH_INTERVAL:-5}" bash "${SCRIPT_DIR}/watch_coordinators.sh" >/tmp/coord_watch_b.log 2>&1 &
+  STATIC_SERVERS_FILE="$SERVERS_FILE" LB_PORT="${LB_PORT:-8702}" NETWORK="$NETWORK" bash "${SCRIPT_DIR}/start_lb.sh"
+fi
 
 echo "✅ Host B listo. Front: http://${SELF_IP}:${FRONT_PORT}"

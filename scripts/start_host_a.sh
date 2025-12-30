@@ -125,4 +125,15 @@ docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
+# Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores
+if [[ "${ENABLE_LB:-1}" == "1" ]]; then
+  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
+  SEEDS=${SEEDS:-"http://coordinator:8700,${COORD_B_URL}"}
+  # Matar watcher previo si existe
+  pkill -f "watch_coordinators.sh.*${SERVERS_FILE}" 2>/dev/null || true
+  OUT="$SERVERS_FILE" SEEDS="$SEEDS" INTERVAL="${LB_WATCH_INTERVAL:-5}" bash "${SCRIPT_DIR}/watch_coordinators.sh" >/tmp/coord_watch_a.log 2>&1 &
+  STATIC_SERVERS_FILE="$SERVERS_FILE" LB_PORT="${LB_PORT:-8702}" NETWORK="$NETWORK" bash "${SCRIPT_DIR}/start_lb.sh"
+fi
+
 echo "✅ Host A listo. Front: http://${SELF_IP}:${FRONT_PORT}"

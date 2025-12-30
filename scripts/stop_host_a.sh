@@ -1,36 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Detiene y elimina los contenedores usados en el Host A.
+# Detiene y elimina contenedores del host A (coordinador, frontend y nodos 1-2).
 
-containers=(
-  coordinator
-  frontend_a
-  raft_events_am_1
-  raft_events_am_2
-  raft_events_nz_1
-  raft_events_nz_2
-  raft_groups_1
-   raft_groups_2
-  raft_users_1
-   raft_users_2
-)
+pkill -f watch_coordinators.sh 2>/dev/null || true
 
-stop_container() {
-  local name="$1"
-  if docker ps -a --format '{{.Names}}' | grep -Fxq "$name"; then
-    echo "Deteniendo $name..."
-    docker stop "$name" >/dev/null 2>&1 || true
-    docker rm "$name" >/dev/null 2>&1 || true
-    echo "Eliminado $name"
-  else
-    echo "$name no existe, se omite."
-  fi
-}
+docker rm -f coordinator frontend_a \
+  raft_events_am_1 raft_events_am_2 \
+  raft_events_nz_1 raft_events_nz_2 \
+  raft_groups_1 raft_groups_2 \
+  raft_users_1 raft_users_2 \
+  coordinator_lb 2>/dev/null || true
 
-echo "Deteniendo contenedores del Host A..."
-for c in "${containers[@]}"; do
-  stop_container "$c"
-done
-
-echo "Host A limpio: contenedores detenidos y eliminados."
+echo "✅ Contenedores de Host A detenidos/eliminados"

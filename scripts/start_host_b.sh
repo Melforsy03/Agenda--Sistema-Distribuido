@@ -93,11 +93,11 @@ docker run -d --name coordinator_b --network "$NETWORK" \
   -e SHARDS_CONFIG_JSON="" \
   -e COORD_PEERS="${COORD_A_URL}" \
   -e DISABLE_DEFAULT_SHARDS=1 \
-  -l "traefik.enable=true" \
+  -l 'traefik.enable=true' \
   -l "traefik.docker.network=$NETWORK" \
-  -l "traefik.http.routers.coordinator.rule=PathPrefix(`/`)" \
-  -l "traefik.http.routers.coordinator.entrypoints=web" \
-  -l "traefik.http.services.coordinator.loadbalancer.server.port=8700" \
+  -l 'traefik.http.routers.coordinator.rule=PathPrefix(`/`)' \
+  -l 'traefik.http.routers.coordinator.entrypoints=web' \
+  -l 'traefik.http.services.coordinator.loadbalancer.server.port=8700' \
   agenda_backend uvicorn distributed.coordinator.router:app --host 0.0.0.0 --port 8700
 
 echo "🎨 Lanzando frontend en Host B..."

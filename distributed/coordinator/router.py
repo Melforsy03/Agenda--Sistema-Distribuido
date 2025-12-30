@@ -127,11 +127,14 @@ def _parse_nodes(raw: str):
     """Convierte una lista separada por comas en URLs limpias."""
     return [node.strip() for node in raw.split(",") if node.strip()]
 
+def _is_valid_node_url(node: str) -> bool:
+    return isinstance(node, str) and (node.startswith("http://") or node.startswith("https://"))
+
 def _filter_valid_nodes(nodes: list[str]) -> list[str]:
     """Descarta entradas que no sean URLs http(s) válidas."""
     valid = []
     for n in nodes:
-        if isinstance(n, str) and (n.startswith("http://") or n.startswith("https://")):
+        if _is_valid_node_url(n):
             valid.append(n)
     return valid
 
@@ -278,18 +281,25 @@ async def _get_group_member_ids(group_id: int) -> list[int]:
 
 def set_shard_nodes(shard: str, nodes: list[str]):
     """Actualiza nodos de un shard en memoria y limpia caché de líder."""
-    SHARDS[shard] = nodes
-    NODES_PER_SHARD[shard] = len(nodes)
+    clean = _filter_valid_nodes(nodes)
+    SHARDS[shard] = clean
+    NODES_PER_SHARD[shard] = len(clean)
     LEADER_CACHE.pop(shard, None)
 
 def add_node_to_shard(shard: str, node_url: str):
-    nodes = SHARDS.get(shard, [])
+    if not _is_valid_node_url(node_url):
+        logger.warning(f"Rechazando nodo inválido para shard {shard}: {node_url}")
+        return
+    nodes = _filter_valid_nodes(SHARDS.get(shard, []))
     if node_url not in nodes:
         nodes.append(node_url)
-        set_shard_nodes(shard, nodes)
+    set_shard_nodes(shard, nodes)
 
 def replace_node_in_shard(shard: str, old_url: str, new_url: str):
-    nodes = SHARDS.get(shard, [])
+    if not _is_valid_node_url(new_url):
+        logger.warning(f"Rechazando nodo inválido para shard {shard}: {new_url}")
+        return
+    nodes = _filter_valid_nodes(SHARDS.get(shard, []))
     updated = []
     for n in nodes:
         if n == old_url:
@@ -378,6 +388,23 @@ async def validate_leader(url: str) -> bool:
             return "leader" in role
     except Exception:
         return False
+
+async def prune_missing_nodes():
+    """Elimina de SHARDS los nodos que ya no responden (p.ej. contenedor borrado)."""
+    changed = False
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        for shard, nodes in list(SHARDS.items()):
+            reachable = []
+            for node in nodes:
+                try:
+                    await client.get(f"{node}/health")
+                    reachable.append(node)
+                except Exception:
+                    logger.warning(f"Pruning nodo inalcanzable en {shard}: {node}")
+            if len(reachable) != len(nodes):
+                set_shard_nodes(shard, reachable)
+                changed = True
+    return changed
 
 # =========================================================
 # 📦 Modelos Pydantic
@@ -1099,6 +1126,7 @@ def _is_future(dt_str: str, now_ts: float):
 @app.get("/leaders")
 async def get_leaders():
     """Lista los líderes actuales por shard"""
+    await prune_missing_nodes()
     results = {}
     for shard in SHARDS.keys():
         try:
@@ -1158,6 +1186,8 @@ async def admin_add_node(data: dict):
     node_url = data.get("node_url")
     if not shard or not node_url:
         raise HTTPException(status_code=400, detail="Se requiere shard y node_url")
+    if not _is_valid_node_url(node_url):
+        raise HTTPException(status_code=400, detail="node_url debe empezar con http:// o https://")
     add_node_to_shard(shard, node_url)
     await propagate_peers_to_shard(shard)
     return {"status": "ok", "shards": SHARDS}

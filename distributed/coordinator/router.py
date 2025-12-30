@@ -90,10 +90,17 @@ class WSManager:
         logger.info(f"🔔 WebSocket server escuchando en ws://{self.host}:{self.port}")
 
 ws_manager = WSManager()
+PEER_COORDINATORS = [
+    url.strip()
+    for url in (os.getenv("COORD_PEERS") or "").split(",")
+    if url.strip()
+]
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(ws_manager.start())
+    if PEER_COORDINATORS:
+        asyncio.create_task(periodic_peer_sync())
 
 # =========================================================
 # 🌐 CONFIGURACIÓN DE SHARDS (dinámica para escalar)
@@ -137,6 +144,19 @@ def _filter_valid_nodes(nodes: list[str]) -> list[str]:
         if _is_valid_node_url(n):
             valid.append(n)
     return valid
+
+def _union_nodes(*node_lists: list[list[str]]) -> list[str]:
+    """Une listas de nodos, filtra inválidos y quita duplicados."""
+    merged = []
+    for lst in node_lists:
+        if not lst:
+            continue
+        merged.extend(lst)
+    uniq = []
+    for n in _filter_valid_nodes(merged):
+        if n not in uniq:
+            uniq.append(n)
+    return uniq
 
 ALIAS_TO_CANONICAL = {
     "events_a_m": "eventos_a_m",
@@ -409,6 +429,35 @@ async def prune_missing_nodes():
                 set_shard_nodes(shard, reachable)
                 changed = True
     return changed
+
+async def sync_from_peers():
+    """Intenta sincronizar shards desde otros coordinadores listados en COORD_PEERS."""
+    if not PEER_COORDINATORS:
+        return
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for peer in PEER_COORDINATORS:
+            try:
+                resp = await client.get(f"{peer}/leaders")
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                for shard, info in data.items():
+                    nodes = info.get("nodes") or []
+                    if nodes:
+                        merged = _union_nodes(SHARDS.get(_canonical_shard(shard), []), nodes)
+                        set_shard_nodes(shard, merged)
+            except Exception as e:
+                logger.warning(f"No se pudo sincronizar shards desde {peer}: {e}")
+
+async def periodic_peer_sync():
+    """Sincroniza con peers y prunea nodos caídos de forma periódica."""
+    while True:
+        try:
+            await sync_from_peers()
+            await prune_missing_nodes()
+        except Exception as e:
+            logger.warning(f"Error en sync periódica: {e}")
+        await asyncio.sleep(15)
 
 # =========================================================
 # 📦 Modelos Pydantic

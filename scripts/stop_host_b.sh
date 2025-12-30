@@ -4,6 +4,7 @@ set -euo pipefail
 # Detiene y elimina los contenedores usados en el Host B.
 
 containers=(
+  coordinator_b
   frontend_b
   raft_events_am_3
   raft_events_nz_3

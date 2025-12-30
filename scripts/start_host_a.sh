@@ -24,6 +24,8 @@ HOST_B_IP=${HOST_B_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8501}
 WS_PORT=${WS_PORT:-8768}
+COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
+COORD_LB_URL=${COORD_LB_URL:-http://coordinator_lb:8700}
 
 if [[ -z "$HOST_B_IP" ]]; then
   echo "❌ Debes exportar HOST_B_IP. Ej: HOST_B_IP=192.168.171.147" >&2
@@ -80,14 +82,14 @@ peers_for() {
 echo "🚀 Lanzando nodos en Host A (nodos 1-2 por shard)..."
 for i in 0 1; do
   peers=$(peers_for EVENTS_AM_NAMES EVENTS_AM_PORTS "$i")
-  run_node "${EVENTS_AM_NAMES[$i]}" "${EVENTS_AM_PORTS[$i]}" EVENTOS_A_M "$peers" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_am$((i+1))"
+  run_node "${EVENTS_AM_NAMES[$i]}" "${EVENTS_AM_PORTS[$i]}" EVENTOS_A_M "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_am$((i+1))"
 done
 for i in 0 1; do
   peers=$(peers_for EVENTS_NZ_NAMES EVENTS_NZ_PORTS "$i")
-  run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_nz$((i+1))"
+  run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_nz$((i+1))"
 done
-run_node "${GROUPS_NAMES[0]}" "${GROUPS_PORTS[0]}" GRUPOS "$(peers_for GROUPS_NAMES GROUPS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_groups1"
-run_node "${USERS_NAMES[0]}"  "${USERS_PORTS[0]}"  USUARIOS "$(peers_for USERS_NAMES USERS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_users1"
+run_node "${GROUPS_NAMES[0]}" "${GROUPS_PORTS[0]}" GRUPOS "$(peers_for GROUPS_NAMES GROUPS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_groups1"
+run_node "${USERS_NAMES[0]}"  "${USERS_PORTS[0]}"  USUARIOS "$(peers_for USERS_NAMES USERS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_users1"
 
 echo "🎯 Lanzando coordinador principal..."
 docker rm -f coordinator 2>/dev/null || true
@@ -96,6 +98,11 @@ docker run -d --name coordinator --network "$NETWORK" \
   -e PYTHONPATH="/app:/app/backend" \
   -e SHARDS_CONFIG_JSON="" \
   -e DISABLE_DEFAULT_SHARDS=1 \
+  -l "traefik.enable=true" \
+  -l "traefik.docker.network=$NETWORK" \
+  -l "traefik.http.routers.coordinator.rule=PathPrefix(`/`)" \
+  -l "traefik.http.routers.coordinator.entrypoints=web" \
+  -l "traefik.http.services.coordinator.loadbalancer.server.port=8700" \
   agenda_backend uvicorn distributed.coordinator.router:app --host 0.0.0.0 --port 8700
 
 echo "🎨 Lanzando frontend en Host A..."
@@ -103,9 +110,9 @@ docker rm -f frontend_a 2>/dev/null || true
 docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
-  -e API_BASE_URL=http://coordinator:8700 \
-  -e WEBSOCKET_HOST=coordinator \
-  -e WEBSOCKET_PORT=8767 \
+  -e API_BASE_URL=${COORD_LB_URL} \
+  -e WEBSOCKET_HOST=${COORD_LB_URL/http:\/\/} \
+  -e WEBSOCKET_PORT=$(echo ${COORD_LB_URL#*:} | cut -d/ -f1) \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
 echo "✅ Host A listo. Front: http://${SELF_IP}:${FRONT_PORT}"

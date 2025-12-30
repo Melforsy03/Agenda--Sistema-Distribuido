@@ -5,6 +5,7 @@ import asyncio
 def show_events_view(user_id, api_client, token):
     """Vista principal de eventos con pestañas para crear y listar eventos"""
     st.header("📋 Mis Eventos")
+    st.session_state.setdefault("removed_event_ids", [])
     
     # Tabs para crear evento y ver lista de eventos
     tab1, tab2 = st.tabs(["➕ Crear Evento", "📋 Lista de Eventos"])
@@ -44,6 +45,8 @@ def show_events_list_view(user_id, api_client, token):
     # Obtener eventos filtrados
     try:
         events = api_client.get_user_events_detailed(token, filter_map[filter_type])
+        if st.session_state["removed_event_ids"]:
+            events = [e for e in events if str(e.get("id")) not in st.session_state["removed_event_ids"]]
 
         # Aplicar búsqueda por texto
         if search_text:
@@ -147,6 +150,8 @@ def show_event_card(event, user_id, api_client, token):
                             response = api_client.cancel_event(event['id'], token)
                             st.success(response.get('message', 'Evento cancelado exitosamente'))
                             st.session_state[f'confirm_cancel_{event["id"]}'] = False
+                            if str(event["id"]) not in st.session_state["removed_event_ids"]:
+                                st.session_state["removed_event_ids"].append(str(event["id"]))
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al cancelar el evento: {str(e)}")
@@ -172,6 +177,8 @@ def show_event_card(event, user_id, api_client, token):
                             response = api_client.leave_event(event['id'], token)
                             st.success(response.get('message', 'Has salido del evento'))
                             st.session_state[f'confirm_leave_{event["id"]}'] = False
+                            if str(event["id"]) not in st.session_state["removed_event_ids"]:
+                                st.session_state["removed_event_ids"].append(str(event["id"]))
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al salir del evento: {str(e)}")

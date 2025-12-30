@@ -138,6 +138,20 @@ def _filter_valid_nodes(nodes: list[str]) -> list[str]:
             valid.append(n)
     return valid
 
+ALIAS_TO_CANONICAL = {
+    "events_a_m": "eventos_a_m",
+    "events_n_z": "eventos_n_z",
+    "grupos": "groups",
+    "usuarios": "users",
+}
+
+def _canonical_shard(name: str) -> str:
+    """Normaliza nombre de shard a la clave canónica."""
+    if not name:
+        return name
+    key = name.lower()
+    return ALIAS_TO_CANONICAL.get(key, key)
+
 
 def load_shards_from_env() -> dict:
     """Permite definir shards y nodos vía variables de entorno para escalar sin tocar código.
@@ -172,15 +186,13 @@ def load_shards_from_env() -> dict:
             if nodes:
                 shards[shard] = nodes
 
-    # Normalizar claves legacy -> español
-    if "events_a_m" in shards:
-        shards["eventos_a_m"] = shards.pop("events_a_m")
-    if "events_n_z" in shards:
-        shards["eventos_n_z"] = shards.pop("events_n_z")
-    if "grupos" in shards:
-        shards["groups"] = shards.pop("grupos")
-    if "usuarios" in shards:
-        shards["users"] = shards.pop("usuarios")
+    # Normalizar claves legacy -> canónicas
+    normalized = {}
+    for shard, nodes in shards.items():
+        canonical = _canonical_shard(shard)
+        normalized.setdefault(canonical, [])
+        normalized[canonical].extend(nodes)
+    shards = normalized
 
     # Completar con defaults cuando no hay override
     for shard, nodes in DEFAULT_SHARDS.items():
@@ -192,23 +204,7 @@ def load_shards_from_env() -> dict:
 
     return shards
 
-# Alias para soportar nombres en inglés/español en paralelo
-def _add_shard_aliases(shards: dict) -> dict:
-    aliases = {
-        "events_a_m": "eventos_a_m",
-        "events_n_z": "eventos_n_z",
-        "grupos": "groups",
-        "usuarios": "users",
-    }
-    for alias, canonical in aliases.items():
-        if canonical in shards and alias not in shards:
-            shards[alias] = shards[canonical]
-        elif alias in shards and canonical not in shards:
-            shards[canonical] = shards[alias]
-    return shards
-
-
-SHARDS = _add_shard_aliases(load_shards_from_env())
+SHARDS = load_shards_from_env()
 NODES_PER_SHARD = {k: len(v) for k, v in SHARDS.items()}
 
 # Cache local de líderes detectados
@@ -281,25 +277,28 @@ async def _get_group_member_ids(group_id: int) -> list[int]:
 
 def set_shard_nodes(shard: str, nodes: list[str]):
     """Actualiza nodos de un shard en memoria y limpia caché de líder."""
+    canonical = _canonical_shard(shard)
     clean = _filter_valid_nodes(nodes)
-    SHARDS[shard] = clean
-    NODES_PER_SHARD[shard] = len(clean)
-    LEADER_CACHE.pop(shard, None)
+    SHARDS[canonical] = clean
+    NODES_PER_SHARD[canonical] = len(clean)
+    LEADER_CACHE.pop(canonical, None)
 
 def add_node_to_shard(shard: str, node_url: str):
     if not _is_valid_node_url(node_url):
         logger.warning(f"Rechazando nodo inválido para shard {shard}: {node_url}")
         return
-    nodes = _filter_valid_nodes(SHARDS.get(shard, []))
+    canonical = _canonical_shard(shard)
+    nodes = _filter_valid_nodes(SHARDS.get(canonical, []))
     if node_url not in nodes:
         nodes.append(node_url)
-    set_shard_nodes(shard, nodes)
+    set_shard_nodes(canonical, nodes)
 
 def replace_node_in_shard(shard: str, old_url: str, new_url: str):
     if not _is_valid_node_url(new_url):
         logger.warning(f"Rechazando nodo inválido para shard {shard}: {new_url}")
         return
-    nodes = _filter_valid_nodes(SHARDS.get(shard, []))
+    canonical = _canonical_shard(shard)
+    nodes = _filter_valid_nodes(SHARDS.get(canonical, []))
     updated = []
     for n in nodes:
         if n == old_url:
@@ -308,14 +307,15 @@ def replace_node_in_shard(shard: str, old_url: str, new_url: str):
             updated.append(n)
     if new_url not in updated:
         updated.append(new_url)
-    set_shard_nodes(shard, updated)
+    set_shard_nodes(canonical, updated)
 
 async def propagate_peers_to_shard(shard: str):
     """Envía la lista completa de peers a cada nodo del shard."""
-    nodes = SHARDS.get(shard, [])
+    canonical = _canonical_shard(shard)
+    nodes = SHARDS.get(canonical, [])
     if not nodes:
         return
-    rep = NODES_PER_SHARD.get(shard, len(nodes)) or len(nodes)
+    rep = NODES_PER_SHARD.get(canonical, len(nodes)) or len(nodes)
     async with httpx.AsyncClient(timeout=5.0) as client:
         for target in nodes:
             peers = [n for n in nodes if n != target]
@@ -342,6 +342,7 @@ def get_shard_for_user(username: str) -> str:
 
 async def get_leader(shard_name: str) -> str:
     """Devuelve la URL del líder actual del shard"""
+    shard_name = _canonical_shard(shard_name)
     # Si tenemos líder cacheado, lo validamos rápido
     if shard_name in LEADER_CACHE:
         leader_url = LEADER_CACHE[shard_name]
@@ -1182,7 +1183,7 @@ async def cluster_status():
 @app.post("/admin/shards/add")
 async def admin_add_node(data: dict):
     """Agrega un nodo a un shard en caliente (actualiza en memoria y limpia caché)."""
-    shard = data.get("shard")
+    shard = _canonical_shard(data.get("shard"))
     node_url = data.get("node_url")
     if not shard or not node_url:
         raise HTTPException(status_code=400, detail="Se requiere shard y node_url")
@@ -1195,7 +1196,7 @@ async def admin_add_node(data: dict):
 @app.post("/admin/shards/replace")
 async def admin_replace_node(data: dict):
     """Reemplaza un nodo en un shard en caliente."""
-    shard = data.get("shard")
+    shard = _canonical_shard(data.get("shard"))
     old_url = data.get("old_url")
     new_url = data.get("new_url")
     if not shard or not old_url or not new_url:

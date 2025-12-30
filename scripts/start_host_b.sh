@@ -40,7 +40,7 @@ USERS_NAMES=(raft_users_1 raft_users_2 raft_users_3)
 USERS_PORTS=(8810 8811 8812)
 
 run_node() {
-  local name=$1 port=$2 shard=$3 peers=$4
+  local name=$1 port=$2 shard=$3 peers=$4 coord_url=$5 coord_urls=$6
   docker run -d --name "$name" --hostname "$name" --network "$NETWORK" -p "${port}:${port}" \
     -v "${name}_data":/app/data \
     -e PYTHONPATH="/app:/app/backend" \
@@ -49,7 +49,8 @@ run_node() {
     -e NODE_URL="http://${name}:${port}" \
     -e PORT="$port" \
     -e PEERS="$peers" \
-    -e COORD_URL="http://coordinator:8700" \
+    -e COORD_URL="$coord_url" \
+    -e COORD_URLS="$coord_urls" \
     agenda_backend uvicorn distributed.nodes.raft_node:app --host 0.0.0.0 --port "$port"
 }
 
@@ -67,24 +68,36 @@ peers_for() {
 
 echo "🚀 Lanzando nodos en Host B (nodo 3 por shard)..."
 peers=$(peers_for EVENTS_AM_NAMES EVENTS_AM_PORTS 2)
-run_node "${EVENTS_AM_NAMES[2]}" "${EVENTS_AM_PORTS[2]}" EVENTOS_A_M "$peers"
+run_node "${EVENTS_AM_NAMES[2]}" "${EVENTS_AM_PORTS[2]}" EVENTOS_A_M "$peers" "http://coordinator_b:8700" "http://coordinator_b:8700,http://coordinator:8700"
 
 peers=$(peers_for EVENTS_NZ_NAMES EVENTS_NZ_PORTS 2)
-run_node "${EVENTS_NZ_NAMES[2]}" "${EVENTS_NZ_PORTS[2]}" EVENTOS_N_Z "$peers"
+run_node "${EVENTS_NZ_NAMES[2]}" "${EVENTS_NZ_PORTS[2]}" EVENTOS_N_Z "$peers" "http://coordinator_b:8700" "http://coordinator_b:8700,http://coordinator:8700"
 
 peers=$(peers_for GROUPS_NAMES GROUPS_PORTS 2)
-run_node "${GROUPS_NAMES[2]}" "${GROUPS_PORTS[2]}" GRUPOS "$peers"
+run_node "${GROUPS_NAMES[2]}" "${GROUPS_PORTS[2]}" GRUPOS "$peers" "http://coordinator_b:8700" "http://coordinator_b:8700,http://coordinator:8700"
 
 peers=$(peers_for USERS_NAMES USERS_PORTS 2)
-run_node "${USERS_NAMES[2]}" "${USERS_PORTS[2]}" USUARIOS "$peers"
+run_node "${USERS_NAMES[2]}" "${USERS_PORTS[2]}" USUARIOS "$peers" "http://coordinator_b:8700" "http://coordinator_b:8700,http://coordinator:8700"
+
+echo "🎯 Lanzando coordinador B..."
+docker rm -f coordinator_b 2>/dev/null || true
+docker run -d --name coordinator_b --network "$NETWORK" \
+  -p 8701:8700 \
+  -e PYTHONPATH="/app:/app/backend" \
+  -e SHARDS_CONFIG_JSON="" \
+  -e SHARD_EVENTOS_A_M="$(IFS=,; echo http://raft_events_am_1:8801,http://raft_events_am_2:8802,http://raft_events_am_3:8803)" \
+  -e SHARD_EVENTOS_N_Z="$(IFS=,; echo http://raft_events_nz_1:8804,http://raft_events_nz_2:8805,http://raft_events_nz_3:8806)" \
+  -e SHARD_GROUPS="$(IFS=,; echo http://raft_groups_1:8807,http://raft_groups_2:8808,http://raft_groups_3:8809)" \
+  -e SHARD_USERS="$(IFS=,; echo http://raft_users_1:8810,http://raft_users_2:8811,http://raft_users_3:8812)" \
+  agenda_backend uvicorn distributed.coordinator.router:app --host 0.0.0.0 --port 8700
 
 echo "🎨 Lanzando frontend en Host B..."
 docker rm -f frontend_b 2>/dev/null || true
 docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
-  -e API_BASE_URL=http://coordinator:8700 \
-  -e WEBSOCKET_HOST=coordinator \
+  -e API_BASE_URL=http://coordinator_b:8700 \
+  -e WEBSOCKET_HOST=coordinator_b \
   -e WEBSOCKET_PORT=8767 \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 

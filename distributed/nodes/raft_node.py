@@ -18,6 +18,7 @@ PEERS = [peer.strip() for peer in os.getenv("PEERS", "").split(",") if peer.stri
 NODE_URL = os.getenv("NODE_URL", f"http://localhost:{PORT}")
 REPLICATION_FACTOR = int(os.getenv("REPLICATION_FACTOR", "0") or 0)
 COORD_URL = os.getenv("COORD_URL")
+COORD_URLS = os.getenv("COORD_URLS")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(f"raft_{NODE_ID}")
@@ -261,18 +262,25 @@ async def startup():
 
 
 async def register_in_coordinator():
-    if not COORD_URL:
+    urls = []
+    if COORD_URLS:
+        urls.extend([u.strip() for u in COORD_URLS.split(",") if u.strip()])
+    if COORD_URL:
+        urls.append(COORD_URL)
+    urls = [u for u in urls if u]
+    if not urls:
         return
     payload = {"shard": SHARD_NAME.lower(), "node_url": NODE_URL}
     while True:
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                resp = await client.post(f"{COORD_URL}/admin/shards/add", json=payload)
-                if resp.status_code == 200:
-                    logger.info(f"📣 Nodo {NODE_ID} registrado en coordinador {COORD_URL}")
-                    return
-        except Exception as e:
-            logger.warning(f"Error registrando en coordinador: {e}")
+        for url in urls:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    resp = await client.post(f"{url}/admin/shards/add", json=payload)
+                    if resp.status_code == 200:
+                        logger.info(f"📣 Nodo {NODE_ID} registrado en coordinador {url}")
+                        return
+            except Exception as e:
+                logger.warning(f"Error registrando en coordinador {url}: {e}")
         await asyncio.sleep(5)
 
 

@@ -51,7 +51,7 @@ USERS_PORTS=(8810 8811 8812)
 echo "🌐 Red: $NETWORK | IP local: $SELF_IP | Host B: $HOST_B_IP"
 
 run_node() {
-  local name=$1 port=$2 shard=$3 peers=$4 coord_url=$5 volume=$6
+  local name=$1 port=$2 shard=$3 peers=$4 coord_url=$5 coord_urls=$6 volume=$7
   docker run -d --name "$name" --hostname "$name" --network "$NETWORK" -p "${port}:${port}" \
     -v "$volume":/app/data \
     -e PYTHONPATH="/app:/app/backend" \
@@ -61,6 +61,7 @@ run_node() {
     -e PORT="$port" \
     -e PEERS="$peers" \
     -e COORD_URL="$coord_url" \
+    -e COORD_URLS="$coord_urls" \
     agenda_backend uvicorn distributed.nodes.raft_node:app --host 0.0.0.0 --port "$port"
 }
 
@@ -79,14 +80,14 @@ peers_for() {
 echo "🚀 Lanzando nodos en Host A (nodos 1-2 por shard)..."
 for i in 0 1; do
   peers=$(peers_for EVENTS_AM_NAMES EVENTS_AM_PORTS "$i")
-  run_node "${EVENTS_AM_NAMES[$i]}" "${EVENTS_AM_PORTS[$i]}" EVENTOS_A_M "$peers" "http://coordinator:8700" "raft_data_am$((i+1))"
+  run_node "${EVENTS_AM_NAMES[$i]}" "${EVENTS_AM_PORTS[$i]}" EVENTOS_A_M "$peers" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_am$((i+1))"
 done
 for i in 0 1; do
   peers=$(peers_for EVENTS_NZ_NAMES EVENTS_NZ_PORTS "$i")
-  run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "raft_data_nz$((i+1))"
+  run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_nz$((i+1))"
 done
-run_node "${GROUPS_NAMES[0]}" "${GROUPS_PORTS[0]}" GRUPOS "$(peers_for GROUPS_NAMES GROUPS_PORTS 0)" "http://coordinator:8700" "raft_data_groups1"
-run_node "${USERS_NAMES[0]}"  "${USERS_PORTS[0]}"  USUARIOS "$(peers_for USERS_NAMES USERS_PORTS 0)" "http://coordinator:8700" "raft_data_users1"
+run_node "${GROUPS_NAMES[0]}" "${GROUPS_PORTS[0]}" GRUPOS "$(peers_for GROUPS_NAMES GROUPS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_groups1"
+run_node "${USERS_NAMES[0]}"  "${USERS_PORTS[0]}"  USUARIOS "$(peers_for USERS_NAMES USERS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,http://coordinator_b:8700" "raft_data_users1"
 
 echo "🎯 Lanzando coordinador principal..."
 docker rm -f coordinator 2>/dev/null || true

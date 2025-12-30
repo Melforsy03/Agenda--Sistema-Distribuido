@@ -24,23 +24,43 @@ from urllib.error import URLError
 
 out, seeds_raw = sys.argv[1], sys.argv[2]
 seeds = [s.strip() for s in seeds_raw.split(",") if s.strip()]
-urls = set()
+urls = set(seeds)
 
-for seed in seeds:
-    # /health para saber si está vivo y es coordinador
+def fetch_json(url, timeout=2):
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return json.load(resp)
+
+live = set()
+for seed in list(urls):
     try:
-        with urllib.request.urlopen(f"{seed}/health", timeout=2) as resp:
-            data = json.load(resp)
-            if data.get("service") == "coordinator":
-                urls.add(seed)
+        data = fetch_json(f"{seed}/health")
+        if data.get("service") == "coordinator":
+            live.add(seed)
+    except Exception:
+        continue
+    # Descubrir peers coordinadores si el seed expone el endpoint
+    try:
+        data = fetch_json(f"{seed}/coordinators/peers", timeout=3)
+        for c in data.get("coordinators", []):
+            if isinstance(c, str) and c.startswith("http"):
+                urls.add(c.strip())
     except Exception:
         pass
 
-# Si no quedó nada, usa seeds para no vaciar el LB
-if not urls:
-    urls = set(seeds)
+# Filtrar por /health de los descubiertos
+final = set()
+for u in urls:
+    try:
+        data = fetch_json(f"{u}/health", timeout=2)
+        if data.get("service") == "coordinator":
+            final.add(u)
+    except Exception:
+        continue
 
-servers = [{"url": u} for u in sorted(urls)]
+if not final:
+    final = set(seeds)
+
+servers = [{"url": u} for u in sorted(final)]
 config = {
     "http": {
         "routers": {

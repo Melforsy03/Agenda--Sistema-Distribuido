@@ -102,6 +102,16 @@ async def startup_event():
     if PEER_COORDINATORS:
         asyncio.create_task(periodic_peer_sync())
 
+
+@app.get("/coordinators/peers")
+async def coordinators_peers():
+    """Devuelve lista de coordinadores conocidos (incluyéndonos). Útil para discovery dinámico."""
+    peers = list(PEER_COORDINATORS) if PEER_COORDINATORS else []
+    self_url = os.getenv("SELF_COORD_URL")
+    if self_url:
+        peers.append(self_url)
+    return {"coordinators": peers}
+
 # =========================================================
 # 🌐 CONFIGURACIÓN DE SHARDS (dinámica para escalar)
 # =========================================================

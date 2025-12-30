@@ -15,6 +15,7 @@ COORD_LB_URL=${COORD_LB_URL:-${COORD_B_URL:-http://coordinator_b:8700}}
 LB_HOST=$(echo "$COORD_LB_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
 LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
 LB_PORT=${LB_PORT:-8700}
+WS_PORT=${WS_PORT:-8769}
 # API interno para el contenedor frontend: si COORD_LB_URL usa localhost/127.*, dentro del contenedor no sirve.
 API_BASE_URL_CONTAINER="$COORD_LB_URL"
 if [[ "$LB_HOST" =~ ^(localhost|127\\.|::1)$ ]]; then
@@ -95,6 +96,7 @@ echo "🎯 Lanzando coordinador B..."
 docker rm -f coordinator_b 2>/dev/null || true
 docker run -d --name coordinator_b --network "$NETWORK" \
   -p 8701:8700 \
+  -p ${WS_PORT}:8767 \
   -e PYTHONPATH="/app:/app/backend" \
   -e SHARDS_CONFIG_JSON="" \
   -e COORD_PEERS="${COORD_A_URL}" \
@@ -112,8 +114,8 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
   -e API_BASE_URL=${API_BASE_URL_CONTAINER} \
-  -e WEBSOCKET_HOST=${LB_HOST} \
-  -e WEBSOCKET_PORT=${LB_PORT} \
+  -e WEBSOCKET_HOST=${SELF_IP} \
+  -e WEBSOCKET_PORT=${WS_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
 # Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores.

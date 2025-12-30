@@ -271,21 +271,21 @@ async def register_in_coordinator():
     if not urls:
         return
 
-    # Registrar este nodo en todos los coordinadores (no solo el primero que responda)
-    pending = set(urls)
     payload = {"shard": SHARD_NAME.lower(), "node_url": NODE_URL}
-    while pending:
-        for url in list(pending):
+    seen_ok = {url: False for url in urls}
+    # Reintentar siempre: si un coordinador se reinicia, nos volvemos a registrar
+    while True:
+        for url in urls:
             try:
                 async with httpx.AsyncClient(timeout=3.0) as client:
                     resp = await client.post(f"{url}/admin/shards/add", json=payload)
-                    if resp.status_code == 200:
+                    if resp.status_code == 200 and not seen_ok[url]:
                         logger.info(f"📣 Nodo {NODE_ID} registrado en coordinador {url}")
-                        pending.discard(url)
+                        seen_ok[url] = True
             except Exception as e:
                 logger.warning(f"Error registrando en coordinador {url}: {e}")
-        if pending:
-            await asyncio.sleep(5)
+                seen_ok[url] = False
+        await asyncio.sleep(10)
 
 
 # ========= Endpoints de aplicación según shard =========

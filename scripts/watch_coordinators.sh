@@ -27,23 +27,12 @@ seeds = [s.strip() for s in seeds_raw.split(",") if s.strip()]
 urls = set()
 
 for seed in seeds:
-    # /health para saber si está vivo
+    # /health para saber si está vivo y es coordinador
     try:
         with urllib.request.urlopen(f"{seed}/health", timeout=2) as resp:
-            resp.read()
-            urls.add(seed)
-    except Exception:
-        pass
-    # /leaders para descubrir otros coordinadores/nodos
-    try:
-        with urllib.request.urlopen(f"{seed}/leaders", timeout=3) as resp:
             data = json.load(resp)
-            if isinstance(data, dict):
-                for info in data.values():
-                    nodes = info.get("nodes") or []
-                    for n in nodes:
-                        if isinstance(n, str) and n.startswith("http"):
-                            urls.add(n)
+            if data.get("service") == "coordinator":
+                urls.add(seed)
     except Exception:
         pass
 

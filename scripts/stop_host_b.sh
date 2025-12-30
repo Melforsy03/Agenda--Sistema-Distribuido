@@ -11,7 +11,7 @@ containers=(
   raft_groups_3
   raft_users_2
   raft_users_3
-  coordinator2
+  coordinator_b
 )
 
 stop_container() {

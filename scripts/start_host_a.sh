@@ -95,10 +95,7 @@ docker run -d --name coordinator --network "$NETWORK" \
   -p 8700:8700 -p ${WS_PORT}:8767 \
   -e PYTHONPATH="/app:/app/backend" \
   -e SHARDS_CONFIG_JSON="" \
-  -e SHARD_EVENTOS_A_M="$(IFS=,; echo http://raft_events_am_1:8801,http://raft_events_am_2:8802,http://raft_events_am_3:8803)" \
-  -e SHARD_EVENTOS_N_Z="$(IFS=,; echo http://raft_events_nz_1:8804,http://raft_events_nz_2:8805,http://raft_events_nz_3:8806)" \
-  -e SHARD_GROUPS="$(IFS=,; echo http://raft_groups_1:8807,http://raft_groups_2:8808,http://raft_groups_3:8809)" \
-  -e SHARD_USERS="$(IFS=,; echo http://raft_users_1:8810,http://raft_users_2:8811,http://raft_users_3:8812)" \
+  -e DISABLE_DEFAULT_SHARDS=1 \
   agenda_backend uvicorn distributed.coordinator.router:app --host 0.0.0.0 --port 8700
 
 echo "🎨 Lanzando frontend en Host A..."

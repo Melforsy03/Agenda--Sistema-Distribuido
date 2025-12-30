@@ -161,6 +161,8 @@ def load_shards_from_env() -> dict:
     2) Variables SHARD_EVENTOS_A_M, SHARD_EVENTOS_N_Z, SHARD_GRUPOS, SHARD_USUARIOS (coma separadas)
     3) DEFAULT_SHARDS hardcodeado
     """
+    disable_defaults = os.getenv("DISABLE_DEFAULT_SHARDS", "").lower() in ("1", "true", "yes")
+
     # Opción 1: JSON completo
     cfg_json = os.getenv("SHARDS_CONFIG_JSON")
     if cfg_json:
@@ -194,9 +196,10 @@ def load_shards_from_env() -> dict:
         normalized[canonical].extend(nodes)
     shards = normalized
 
-    # Completar con defaults cuando no hay override
-    for shard, nodes in DEFAULT_SHARDS.items():
-        shards.setdefault(shard, nodes)
+    # Completar con defaults cuando no hay override (a menos que se desactiven)
+    if not disable_defaults:
+        for shard, nodes in DEFAULT_SHARDS.items():
+            shards.setdefault(shard, nodes)
 
     # Filtrar nodos inválidos (no http/https)
     for shard, nodes in list(shards.items()):

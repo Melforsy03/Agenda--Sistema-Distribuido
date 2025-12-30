@@ -110,8 +110,15 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
-# Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores
-if [[ "${ENABLE_LB:-1}" == "1" ]]; then
+# Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores.
+# Si COORD_LB_URL apunta directamente al coordinador (puerto 8700/8701), omitimos el LB para evitar colisión de puerto.
+LB_RUN=${ENABLE_LB:-1}
+if [[ "$LB_PORT" == "8700" || "$LB_PORT" == "8701" ]]; then
+  LB_RUN=0
+  echo "ℹ️ COORD_LB_URL usa puerto ${LB_PORT} del coordinador; no se levanta Traefik local."
+fi
+
+if [[ "$LB_RUN" == "1" ]]; then
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
   SEEDS=${SEEDS:-"${COORD_A_URL},http://coordinator_b:8700"}

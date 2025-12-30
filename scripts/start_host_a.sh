@@ -26,6 +26,10 @@ FRONT_PORT=${FRONT_PORT:-8501}
 WS_PORT=${WS_PORT:-8768}
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
 COORD_LB_URL=${COORD_LB_URL:-http://coordinator_lb:8700}
+# Extra: host/puerto derivados de COORD_LB_URL para API/WS
+LB_HOST=$(echo "$COORD_LB_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
+LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
+LB_PORT=${LB_PORT:-8700}
 
 if [[ -z "$HOST_B_IP" ]]; then
   echo "❌ Debes exportar HOST_B_IP. Ej: HOST_B_IP=192.168.171.147" >&2
@@ -111,8 +115,8 @@ docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
   -e API_BASE_URL=${COORD_LB_URL} \
-  -e WEBSOCKET_HOST=${COORD_LB_URL/http:\/\/} \
-  -e WEBSOCKET_PORT=$(echo ${COORD_LB_URL#*:} | cut -d/ -f1) \
+  -e WEBSOCKET_HOST=${LB_HOST} \
+  -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
 echo "✅ Host A listo. Front: http://${SELF_IP}:${FRONT_PORT}"

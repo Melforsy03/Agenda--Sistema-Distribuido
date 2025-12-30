@@ -30,6 +30,12 @@ COORD_LB_URL=${COORD_LB_URL:-http://coordinator_lb:8700}
 LB_HOST=$(echo "$COORD_LB_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
 LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
 LB_PORT=${LB_PORT:-8700}
+# API interno para el contenedor frontend
+API_BASE_URL_CONTAINER="$COORD_LB_URL"
+if [[ "$LB_HOST" =~ ^(localhost|127\\.|::1)$ ]]; then
+  API_BASE_URL_CONTAINER="http://coordinator:8700"
+  echo "ℹ️ COORD_LB_URL usa localhost; dentro del contenedor se usará ${API_BASE_URL_CONTAINER}"
+fi
 
 if [[ -z "$HOST_B_IP" ]]; then
   echo "❌ Debes exportar HOST_B_IP. Ej: HOST_B_IP=192.168.171.147" >&2
@@ -120,7 +126,7 @@ docker rm -f frontend_a 2>/dev/null || true
 docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
-  -e API_BASE_URL=${COORD_LB_URL} \
+  -e API_BASE_URL=${API_BASE_URL_CONTAINER} \
   -e WEBSOCKET_HOST=${LB_HOST} \
   -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0

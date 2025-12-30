@@ -15,6 +15,12 @@ COORD_LB_URL=${COORD_LB_URL:-${COORD_B_URL:-http://coordinator_b:8700}}
 LB_HOST=$(echo "$COORD_LB_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
 LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
 LB_PORT=${LB_PORT:-8700}
+# API interno para el contenedor frontend: si COORD_LB_URL usa localhost/127.*, dentro del contenedor no sirve.
+API_BASE_URL_CONTAINER="$COORD_LB_URL"
+if [[ "$LB_HOST" =~ ^(localhost|127\\.|::1)$ ]]; then
+  API_BASE_URL_CONTAINER="http://coordinator_b:8700"
+  echo "ℹ️ COORD_LB_URL usa localhost; dentro del contenedor se usará ${API_BASE_URL_CONTAINER}"
+fi
 
 # Parar y eliminar contenedores previos usados por este host (solo nodos 3 por shard)
 docker rm -f coordinator_b frontend_b \
@@ -105,7 +111,7 @@ docker rm -f frontend_b 2>/dev/null || true
 docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
-  -e API_BASE_URL=${COORD_LB_URL} \
+  -e API_BASE_URL=${API_BASE_URL_CONTAINER} \
   -e WEBSOCKET_HOST=${LB_HOST} \
   -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0

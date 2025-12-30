@@ -17,8 +17,8 @@ unset SHARD_EVENTOS_A_M SHARD_EVENTOS_N_Z SHARD_EVENTS_A_M SHARD_EVENTS_N_Z
 docker rm -f coordinator frontend_a \
   raft_events_am_1 raft_events_am_2 \
   raft_events_nz_1 raft_events_nz_2 \
-  raft_groups_1 \
-  raft_users_1 2>/dev/null || true
+  raft_groups_1 raft_groups_2 \
+  raft_users_1 raft_users_2 2>/dev/null || true
 
 HOST_B_IP=${HOST_B_IP:-}
 NETWORK=${NETWORK:-agenda_net}
@@ -92,8 +92,14 @@ for i in 0 1; do
   peers=$(peers_for EVENTS_NZ_NAMES EVENTS_NZ_PORTS "$i")
   run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_nz$((i+1))"
 done
-run_node "${GROUPS_NAMES[0]}" "${GROUPS_PORTS[0]}" GRUPOS "$(peers_for GROUPS_NAMES GROUPS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_groups1"
-run_node "${USERS_NAMES[0]}"  "${USERS_PORTS[0]}"  USUARIOS "$(peers_for USERS_NAMES USERS_PORTS 0)" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_users1"
+for i in 0 1; do
+  peers=$(peers_for GROUPS_NAMES GROUPS_PORTS "$i")
+  run_node "${GROUPS_NAMES[$i]}" "${GROUPS_PORTS[$i]}" GRUPOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_groups$((i+1))"
+done
+for i in 0 1; do
+  peers=$(peers_for USERS_NAMES USERS_PORTS "$i")
+  run_node "${USERS_NAMES[$i]}" "${USERS_PORTS[$i]}" USUARIOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_users$((i+1))"
+done
 
 echo "🎯 Lanzando coordinador principal..."
 docker rm -f coordinator 2>/dev/null || true

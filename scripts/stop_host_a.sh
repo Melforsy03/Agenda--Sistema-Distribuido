@@ -11,7 +11,9 @@ containers=(
   raft_events_nz_1
   raft_events_nz_2
   raft_groups_1
+   raft_groups_2
   raft_users_1
+   raft_users_2
 )
 
 stop_container() {

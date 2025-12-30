@@ -17,7 +17,7 @@ LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
 LB_PORT=${LB_PORT:-8700}
 
 # Parar y eliminar contenedores previos usados por este host (solo nodos 3 por shard)
-docker rm -f frontend_b \
+docker rm -f coordinator_b frontend_b \
   raft_events_am_3 \
   raft_events_nz_3 \
   raft_groups_2 raft_groups_3 \

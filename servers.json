@@ -14,7 +14,40 @@
               "url": "http://192.168.20.147:8701"
             },
             {
-              "url": "http://coordinator:8700"
+              "url": "http://raft_events_am_1:8801"
+            },
+            {
+              "url": "http://raft_events_am_2:8802"
+            },
+            {
+              "url": "http://raft_events_am_3:8803"
+            },
+            {
+              "url": "http://raft_events_nz_1:8804"
+            },
+            {
+              "url": "http://raft_events_nz_2:8805"
+            },
+            {
+              "url": "http://raft_events_nz_3:8806"
+            },
+            {
+              "url": "http://raft_groups_1:8807"
+            },
+            {
+              "url": "http://raft_groups_2:8808"
+            },
+            {
+              "url": "http://raft_groups_3:8809"
+            },
+            {
+              "url": "http://raft_users_1:8810"
+            },
+            {
+              "url": "http://raft_users_2:8811"
+            },
+            {
+              "url": "http://raft_users_3:8812"
             }
           ],
           "passHostHeader": true

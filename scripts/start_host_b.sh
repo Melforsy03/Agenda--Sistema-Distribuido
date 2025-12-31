@@ -114,8 +114,8 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
   -e API_BASE_URL=${API_BASE_URL_CONTAINER} \
-  -e WEBSOCKET_HOST=${SELF_IP} \
-  -e WEBSOCKET_PORT=${WS_PORT} \
+  -e WEBSOCKET_HOST=${LB_HOST} \
+  -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
 # Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores.

@@ -49,6 +49,12 @@ if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
 fi
 
 SELF_IP=$(hostname -I | awk '{print $1}')
+SELF_COORD_URL=${SELF_COORD_URL:-http://${SELF_IP}:8700}
+# Lista de coordinadores conocidos para sync/discovery (opcionalmente extender con EXTRA_COORD_PEERS)
+PEER_LIST=${EXTRA_COORD_PEERS:-}
+if [[ -n "$COORD_B_URL" ]]; then
+  PEER_LIST="${COORD_B_URL}${PEER_LIST:+,${PEER_LIST}}"
+fi
 
 # Config: 3 nodos por shard distribuidos entre hosts A/B
 EVENTS_AM_NAMES=(raft_events_am_1 raft_events_am_2 raft_events_am_3)
@@ -114,6 +120,8 @@ docker run -d --name coordinator --network "$NETWORK" \
   -e PYTHONPATH="/app:/app/backend" \
   -e SHARDS_CONFIG_JSON="" \
   -e DISABLE_DEFAULT_SHARDS=1 \
+  -e SELF_COORD_URL="$SELF_COORD_URL" \
+  -e COORD_PEERS="$PEER_LIST" \
   -l 'traefik.enable=true' \
   -l "traefik.docker.network=$NETWORK" \
   -l 'traefik.http.routers.coordinator.rule=PathPrefix(`/`)' \

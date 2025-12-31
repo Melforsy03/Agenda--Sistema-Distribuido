@@ -40,6 +40,12 @@ if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
 fi
 
 SELF_IP=$(hostname -I | awk '{print $1}')
+SELF_COORD_URL=${SELF_COORD_URL:-http://${SELF_IP}:8701}
+# Lista de coordinadores conocidos (agrega extra con EXTRA_COORD_PEERS si quieres más)
+PEER_LIST=${EXTRA_COORD_PEERS:-}
+if [[ -n "$COORD_A_URL" ]]; then
+  PEER_LIST="${COORD_A_URL}${PEER_LIST:+,${PEER_LIST}}"
+fi
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
 echo "➡️ Host B apuntando a coordinador en $COORD_IP | red $NETWORK | IP local $SELF_IP"
 
@@ -99,8 +105,9 @@ docker run -d --name coordinator_b --network "$NETWORK" \
   -p ${WS_PORT}:8767 \
   -e PYTHONPATH="/app:/app/backend" \
   -e SHARDS_CONFIG_JSON="" \
-  -e COORD_PEERS="${COORD_A_URL}" \
+  -e COORD_PEERS="${PEER_LIST}" \
   -e DISABLE_DEFAULT_SHARDS=1 \
+  -e SELF_COORD_URL="$SELF_COORD_URL" \
   -l 'traefik.enable=true' \
   -l "traefik.docker.network=$NETWORK" \
   -l 'traefik.http.routers.coordinator.rule=PathPrefix(`/`)' \

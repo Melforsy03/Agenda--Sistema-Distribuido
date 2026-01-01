@@ -19,11 +19,28 @@ docker rm -f coordinator_lb 2>/dev/null || true
 FILE_ARG=()
 MOUNT_ARG=()
 if [[ -f "$STATIC_SERVERS_FILE" ]]; then
-  FILE_PATH=$(readlink -f "$STATIC_SERVERS_FILE" 2>/dev/null || python3 - <<'PY' "$STATIC_SERVERS_FILE"
-import os,sys
+  FILE_PATH=$(readlink -f "$STATIC_SERVERS_FILE" 2>/dev/null || python3 - "$STATIC_SERVERS_FILE" <<'PY'
+import os, sys
 print(os.path.abspath(sys.argv[1]))
 PY
 )
+  # Sanitizar router rule a PathPrefix(`/`) si quedó mal escrita
+  tmp_fix="${FILE_PATH}.tmp"
+  python3 - "$FILE_PATH" <<'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        data = json.load(f)
+    router = data.get("http", {}).get("routers", {}).get("coordinator")
+    if router and router.get("rule") == "PathPrefix(/)":
+        router["rule"] = "PathPrefix(`/`)"
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+except Exception:
+    pass
+PY
+
   FILE_ARG=(--providers.file.filename="/etc/traefik/dynamic/servers.json" --providers.file.watch=true)
   MOUNT_ARG=(-v "${FILE_PATH}:/etc/traefik/dynamic/servers.json:ro")
   echo "📂 Usando lista estática de coordinadores: $FILE_PATH"

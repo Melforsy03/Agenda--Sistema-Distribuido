@@ -11,10 +11,7 @@
         "loadBalancer": {
           "servers": [
             {
-              "url": "http://192.168.20.112:8700"
-            },
-            {
-              "url": "http://192.168.20.147:8701"
+              "url": "http://192.168.20.112:8703"
             }
           ],
           "passHostHeader": true

@@ -125,22 +125,20 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -e WEBSOCKET_PORT=${LB_PORT} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
-# Opcional: levantar watcher + LB local con Traefik usando lista dinámica de coordinadores.
-# Si COORD_LB_URL apunta directamente al coordinador (puerto 8700/8701), omitimos el LB para evitar colisión de puerto.
-LB_RUN=${ENABLE_LB:-1}
+# Levantar siempre watcher + LB local con Traefik usando lista dinámica de coordinadores.
+# Si COORD_LB_URL apunta directamente al coordinador (puerto 8700/8701), cambiamos LB_PORT a 8702 para no colisionar.
 if [[ "$LB_PORT" == "8700" || "$LB_PORT" == "8701" ]]; then
-  LB_RUN=0
-  echo "ℹ️ COORD_LB_URL usa puerto ${LB_PORT} del coordinador; no se levanta Traefik local."
+  LB_PORT=8702
+  echo "ℹ️ Ajustando LB_PORT a ${LB_PORT} para evitar colisión con coordinador."
 fi
 
-if [[ "$LB_RUN" == "1" ]]; then
-  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
-  SEEDS=${SEEDS:-"${COORD_A_URL},http://coordinator_b:8700"}
-  pkill -f "watch_coordinators.sh.*${SERVERS_FILE}" 2>/dev/null || true
-  # Crear archivo base para que start_lb use provider file desde el inicio
-  if [[ ! -f "$SERVERS_FILE" ]]; then
-    cat >"$SERVERS_FILE" <<'EOF'
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
+SEEDS=${SEEDS:-"${COORD_A_URL},http://coordinator_b:8700"}
+pkill -f "watch_coordinators.sh.*${SERVERS_FILE}" 2>/dev/null || true
+# Crear archivo base para que start_lb use provider file desde el inicio
+if [[ ! -f "$SERVERS_FILE" ]]; then
+  cat >"$SERVERS_FILE" <<'EOF'
 {
   "http": {
     "routers": {
@@ -152,13 +150,12 @@ if [[ "$LB_RUN" == "1" ]]; then
   }
 }
 EOF
-  fi
-  OUT="$SERVERS_FILE" SEEDS="$SEEDS" INTERVAL="${LB_WATCH_INTERVAL:-5}" bash "${SCRIPT_DIR}/watch_coordinators.sh" >/tmp/coord_watch_b.log 2>&1 &
-  for _ in {1..5}; do
-    if [[ -s "$SERVERS_FILE" ]]; then break; fi
-    sleep 1
-  done
-  STATIC_SERVERS_FILE="$SERVERS_FILE" LB_PORT="${LB_PORT:-8702}" NETWORK="$NETWORK" bash "${SCRIPT_DIR}/start_lb.sh"
 fi
+OUT="$SERVERS_FILE" SEEDS="$SEEDS" INTERVAL="${LB_WATCH_INTERVAL:-5}" bash "${SCRIPT_DIR}/watch_coordinators.sh" >/tmp/coord_watch_b.log 2>&1 &
+for _ in {1..5}; do
+  if [[ -s "$SERVERS_FILE" ]]; then break; fi
+  sleep 1
+done
+STATIC_SERVERS_FILE="$SERVERS_FILE" LB_PORT="${LB_PORT:-8702}" NETWORK="$NETWORK" bash "${SCRIPT_DIR}/start_lb.sh"
 
 echo "✅ Host B listo. Front: http://${SELF_IP}:${FRONT_PORT}"

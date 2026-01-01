@@ -138,7 +138,26 @@ if [[ "$LB_RUN" == "1" ]]; then
   SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
   SEEDS=${SEEDS:-"${COORD_A_URL},http://coordinator_b:8700"}
   pkill -f "watch_coordinators.sh.*${SERVERS_FILE}" 2>/dev/null || true
+  # Crear archivo base para que start_lb use provider file desde el inicio
+  if [[ ! -f "$SERVERS_FILE" ]]; then
+    cat >"$SERVERS_FILE" <<'EOF'
+{
+  "http": {
+    "routers": {
+      "coordinator": { "rule": "PathPrefix(`/`)", "service": "coordinators" }
+    },
+    "services": {
+      "coordinators": { "loadBalancer": { "servers": [], "passHostHeader": true } }
+    }
+  }
+}
+EOF
+  fi
   OUT="$SERVERS_FILE" SEEDS="$SEEDS" INTERVAL="${LB_WATCH_INTERVAL:-5}" bash "${SCRIPT_DIR}/watch_coordinators.sh" >/tmp/coord_watch_b.log 2>&1 &
+  for _ in {1..5}; do
+    if [[ -s "$SERVERS_FILE" ]]; then break; fi
+    sleep 1
+  done
   STATIC_SERVERS_FILE="$SERVERS_FILE" LB_PORT="${LB_PORT:-8702}" NETWORK="$NETWORK" bash "${SCRIPT_DIR}/start_lb.sh"
 fi
 

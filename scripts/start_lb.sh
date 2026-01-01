@@ -57,6 +57,10 @@ docker run -d --name coordinator_lb --network "$NETWORK" \
     --providers.docker=true \
     --providers.docker.exposedbydefault=false \
     --providers.docker.network="${NETWORK}" \
+    --retry.attempts=3 \
+    --entrypoints.web.transport.respondingtimeouts.idletimeout=120s \
+    --entrypoints.web.transport.respondingtimeouts.readtimeout=120s \
+    --entrypoints.web.transport.respondingtimeouts.writetimeout=120s \
     --entrypoints.web.address=":8700" \
     "${FILE_ARG[@]}"
 

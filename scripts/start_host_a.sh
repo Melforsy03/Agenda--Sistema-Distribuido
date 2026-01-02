@@ -25,10 +25,11 @@ NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8501}
 WS_PORT=${WS_PORT:-8767}
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
+COORD_C_URL=${COORD_C_URL:-http://coordinator_c:8700}
 # Lista de coordinadores para el frontend (failover simple) sin balanceador
 # Puedes ampliar la lista agregando más URLs coma-separadas en EXTRA_COORD_PEERS o FRONT_API_URLS
 EXTRA_COORD_PEERS=${EXTRA_COORD_PEERS:-}
-API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700,${COORD_B_URL}${EXTRA_COORD_PEERS:+,${EXTRA_COORD_PEERS}}"}
+API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700,${COORD_B_URL},${COORD_C_URL}${EXTRA_COORD_PEERS:+,${EXTRA_COORD_PEERS}}"}
 API_BASE_URLS_CONTAINER=""
 IFS=',' read -ra API_URLS_ARR <<<"$API_URLS_RAW"
 for url in "${API_URLS_ARR[@]}"; do
@@ -64,6 +65,9 @@ SELF_COORD_URL=${SELF_COORD_URL:-http://${SELF_IP}:8700}
 PEER_LIST=${EXTRA_COORD_PEERS:-}
 if [[ -n "$COORD_B_URL" ]]; then
   PEER_LIST="${COORD_B_URL}${PEER_LIST:+,${PEER_LIST}}"
+fi
+if [[ -n "$COORD_C_URL" ]]; then
+  PEER_LIST="${COORD_C_URL}${PEER_LIST:+,${PEER_LIST}}"
 fi
 
 # Config: 3 nodos por shard distribuidos entre hosts A/B

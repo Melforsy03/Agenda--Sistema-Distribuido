@@ -15,7 +15,8 @@ WS_PORT=${WS_PORT:-8767}
 # Lista de coordinadores para el frontend (failover simple) sin balanceador
 # Puedes ampliar la lista agregando más URLs coma-separadas en EXTRA_COORD_PEERS o FRONT_API_URLS
 EXTRA_COORD_PEERS=${EXTRA_COORD_PEERS:-}
-API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator_b:8700,${COORD_A_URL}${EXTRA_COORD_PEERS:+,${EXTRA_COORD_PEERS}}"}
+COORD_C_URL=${COORD_C_URL:-http://coordinator_c:8700}
+API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator_b:8700,${COORD_A_URL},${COORD_C_URL}${EXTRA_COORD_PEERS:+,${EXTRA_COORD_PEERS}}"}
 API_BASE_URLS_CONTAINER=""
 IFS=',' read -ra API_URLS_ARR <<<"$API_URLS_RAW"
 for url in "${API_URLS_ARR[@]}"; do
@@ -58,6 +59,9 @@ if [[ -n "$COORD_A_URL" ]]; then
   PEER_LIST="${COORD_A_URL}${PEER_LIST:+,${PEER_LIST}}"
 fi
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
+if [[ -n "$COORD_C_URL" ]]; then
+  PEER_LIST="${COORD_C_URL}${PEER_LIST:+,${PEER_LIST}}"
+fi
 echo "➡️ Host B apuntando a coordinador en $COORD_IP | red $NETWORK | IP local $SELF_IP"
 
 EVENTS_AM_NAMES=(raft_events_am_1 raft_events_am_2 raft_events_am_3)

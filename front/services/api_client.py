@@ -21,7 +21,11 @@ class APIClient:
         self._probe_ttl = float(os.getenv("API_COORD_PROBE_TTL", "30") or 30)
         self._probe_interval = float(os.getenv("API_COORD_PROBE_INTERVAL", "5") or 5)
         self._lock = threading.Lock()
-        self._pick_best_base(force=True)
+        try:
+            self._pick_best_base(force=True)
+        except Exception:
+            # Si no hay coordinadores vivos al arrancar, seguimos y el hilo de probe intentará descubrir luego.
+            self.base_url = None
         self._start_probe_thread()
 
     def _ping_base(self, base_url: str, timeout: float = 1.5) -> Optional[float]:
@@ -90,7 +94,7 @@ class APIClient:
                 return self.base_url
             # Si no hay vivos y teníamos uno anterior, lo descartamos para evitar quedarnos pegados
             self.base_url = None
-        raise Exception("No se pudo contactar a ningún coordinador configurado")
+        return None
 
     def get_current_base_url(self) -> Optional[str]:
         """Devuelve el coordinador preferido (refrescando si es necesario)."""
@@ -108,10 +112,8 @@ class APIClient:
         
     def _make_request(self, method, endpoint, token=None, **kwargs):
         """Make HTTP request to the API"""
-        try:
-            self._pick_best_base()
-        except Exception:
-            pass
+        self._refresh_peers()
+        self._pick_best_base()
         if not self.base_url:
             raise Exception("No hay coordinador disponible")
 

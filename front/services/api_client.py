@@ -94,8 +94,8 @@ class APIClient:
         last_error = None
         tried = []
         # Intentar con el coordinador seleccionado; si cae, probar otros vivos por latencia
-        for attempt in range(len(self.base_urls)):
-            if attempt == 0:
+        for attempt in range(len(self.base_urls) or 1):
+            if attempt == 0 and self.base_url:
                 base = self.base_url
             else:
                 alive = [b for b in self._alive_bases() if b not in tried]

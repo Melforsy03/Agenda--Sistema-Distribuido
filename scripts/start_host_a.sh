@@ -26,7 +26,9 @@ FRONT_PORT=${FRONT_PORT:-8501}
 WS_PORT=${WS_PORT:-8767}
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
 # Lista de coordinadores para el frontend (failover simple) sin balanceador
-API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700,${COORD_B_URL}"}
+# Puedes ampliar la lista agregando más URLs coma-separadas en EXTRA_COORD_PEERS o FRONT_API_URLS
+EXTRA_COORD_PEERS=${EXTRA_COORD_PEERS:-}
+API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700,${COORD_B_URL}${EXTRA_COORD_PEERS:+,${EXTRA_COORD_PEERS}}"}
 API_BASE_URLS_CONTAINER=""
 IFS=',' read -ra API_URLS_ARR <<<"$API_URLS_RAW"
 for url in "${API_URLS_ARR[@]}"; do

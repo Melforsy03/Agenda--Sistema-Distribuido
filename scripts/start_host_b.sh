@@ -11,7 +11,7 @@ COORD_IP=${COORD_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8502}
 COORD_A_URL=${COORD_A_URL:-http://${COORD_IP}:8700}
-WS_PORT=${WS_PORT:-8769}
+WS_PORT=${WS_PORT:-8767}
 # Lista de coordinadores para el frontend (failover simple) sin balanceador
 API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator_b:8700,${COORD_A_URL}"}
 API_BASE_URLS_CONTAINER=""

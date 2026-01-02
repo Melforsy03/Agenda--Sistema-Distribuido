@@ -7,7 +7,7 @@ set -euo pipefail
 # Opcionales:
 #   NETWORK     (default agenda_net)
 #   FRONT_PORT  (default 8501)
-#   WS_PORT     (default 8768, mapea al 8767 interno del coordinador)
+#   WS_PORT     (default 8767, mapea al 8767 interno del coordinador)
 
 # Limpiar posibles configs sucias de shards en el entorno
 unset SHARDS_CONFIG_JSON SHARD_GROUPS SHARD_GRUPOS SHARD_USERS SHARD_USUARIOS
@@ -23,7 +23,7 @@ docker rm -f coordinator frontend_a \
 HOST_B_IP=${HOST_B_IP:-}
 NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8501}
-WS_PORT=${WS_PORT:-8768}
+WS_PORT=${WS_PORT:-8767}
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
 # Lista de coordinadores para el frontend (failover simple) sin balanceador
 API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700,${COORD_B_URL}"}

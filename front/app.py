@@ -38,13 +38,6 @@ def get_ws_client() -> WebSocketClient:
         st.session_state.ws_client = WebSocketClient()
     return st.session_state.ws_client
 
-def get_websocket_url():
-    """Obtener URL del WebSocket basado en el entorno"""
-    # En Docker Swarm, usar el host del manager
-    host = os.getenv('WEBSOCKET_HOST', 'localhost')
-    port = os.getenv('WEBSOCKET_PORT', '8767')
-    return f"ws://{host}:{port}"
-
 def _notification_handler(data: dict):
     if "notifications" not in st.session_state:
         st.session_state.notifications = []
@@ -159,8 +152,16 @@ def main():
         st.sidebar.title(f"👋 Hola, {st.session_state.username}")
 
         # Mostrar estado de conexión WebSocket
-        websocket_url = get_websocket_url()
-        st.sidebar.info(f"🌐 Conectado a: {websocket_url}")
+        # Ajustar WS al coordinador activo según API
+        try:
+            base_url = api_client.get_current_base_url()
+            if base_url:
+                ws_host, ws_port = api_client.get_current_ws_target()
+                ws_client.configure_from_base(base_url, ws_port)
+        except Exception:
+            pass
+
+        st.sidebar.info(f"🌐 Conectado a: {ws_client.url}")
 
         # Get user ID from token if not in session state
         if 'user_id' not in st.session_state:

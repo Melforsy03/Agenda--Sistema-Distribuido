@@ -1,47 +1,125 @@
 import requests
 import os
+import time
 from typing import Optional, List
+from urllib.parse import urlparse
 
 class APIClient:
     def __init__(self):
-        # Get API base URL from environment variable or use default
-        self.base_url = os.getenv('API_BASE_URL', 'http://localhost:8766')
+        # Permite especificar múltiples coordinadores separados por coma para failover simple
+        urls_raw = os.getenv('API_BASE_URLS')
+        if urls_raw:
+            urls = [u.strip().rstrip('/') for u in urls_raw.split(',') if u.strip()]
+        else:
+            urls = [os.getenv('API_BASE_URL', 'http://localhost:8766').rstrip('/')]
+
+        self.base_urls = urls
+        # Selección actual basada en latencia de /health
+        self.base_url: Optional[str] = None
+        self._last_probe = 0.0
+        self._probe_ttl = float(os.getenv("API_COORD_PROBE_TTL", "30") or 30)
+        self._pick_best_base(force=True)
+
+    def _ping_base(self, base_url: str, timeout: float = 1.5) -> Optional[float]:
+        """Devuelve latencia de /health o None si falla."""
+        try:
+            start = time.perf_counter()
+            resp = requests.get(f"{base_url}/health", timeout=timeout)
+            resp.raise_for_status()
+            if resp.json().get("service") != "coordinator":
+                return None
+            return time.perf_counter() - start
+        except Exception:
+            return None
+
+    def _pick_best_base(self, force: bool = False) -> Optional[str]:
+        """Elige el coordinador con menor latencia entre los que respondan."""
+        now = time.time()
+        if self.base_url and not force and (now - self._last_probe) < self._probe_ttl:
+            return self.base_url
+
+        best = None
+        best_latency = None
+        for candidate in self.base_urls:
+            latency = self._ping_base(candidate)
+            if latency is None:
+                continue
+            if best is None or latency < best_latency:
+                best = candidate
+                best_latency = latency
+
+        if best:
+            self.base_url = best
+            self._last_probe = now
+            return best
+
+        if self.base_url:
+            return self.base_url
+        raise Exception("No se pudo contactar a ningún coordinador configurado")
+
+    def get_current_base_url(self) -> Optional[str]:
+        """Devuelve el coordinador preferido (refrescando si es necesario)."""
+        try:
+            return self._pick_best_base()
+        except Exception:
+            return self.base_url
+
+    def get_current_ws_target(self) -> tuple[Optional[str], str]:
+        """Host y puerto WS consistentes con el coordinador activo."""
+        base = self.get_current_base_url()
+        host = urlparse(base).hostname if base else None
+        port = os.getenv('WEBSOCKET_PORT', '8767')
+        return host, port
         
     def _make_request(self, method, endpoint, token=None, **kwargs):
         """Make HTTP request to the API"""
-        url = f"{self.base_url}{endpoint}"
+        self._pick_best_base()
+        if not self.base_url:
+            raise Exception("No hay coordinador disponible")
+
         headers = {}
         if token:
             headers['Authorization'] = f"Bearer {token}"
             
-        try:
-            response = requests.request(method, url, headers=headers, **kwargs)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as e:
-            # Extraer mensaje de error del servidor si existe
+        last_error = None
+        # Intentar con el coordinador seleccionado; si cae, re-evaluar y reintentar una vez
+        for attempt in range(2):
+            url = f"{self.base_url}{endpoint}"
             try:
-                error_detail = response.json().get('detail', str(e))
-            except:
-                error_detail = str(e)
-            
-            # Crear mensajes de error más amigables según el código de estado
-            if response.status_code == 401:
-                raise Exception("Usuario o contraseña incorrectos")
-            elif response.status_code == 400:
-                raise Exception(f"{error_detail}")
-            elif response.status_code == 404:
-                raise Exception("Recurso no encontrado")
-            elif response.status_code == 500:
-                raise Exception("Error en el servidor. Por favor, intenta más tarde")
-            else:
-                raise Exception(f"Error: {error_detail}")
-        except requests.exceptions.ConnectionError:
-            raise Exception("No se pudo conectar al servidor. Verifica que el servidor esté ejecutándose")
-        except requests.exceptions.Timeout:
-            raise Exception("Tiempo de espera agotado. El servidor no responde")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Error de red: {str(e)}")
+                response = requests.request(method, url, headers=headers, **kwargs)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.HTTPError as e:
+                # Extraer mensaje de error del servidor si existe
+                try:
+                    error_detail = response.json().get('detail', str(e))
+                except Exception:
+                    error_detail = str(e)
+                
+                # Crear mensajes de error más amigables según el código de estado
+                if response.status_code == 401:
+                    raise Exception("Usuario o contraseña incorrectos")
+                elif response.status_code == 400:
+                    raise Exception(f"{error_detail}")
+                elif response.status_code == 404:
+                    raise Exception("Recurso no encontrado")
+                elif response.status_code == 500:
+                    raise Exception("Error en el servidor. Por favor, intenta más tarde")
+                else:
+                    raise Exception(f"Error: {error_detail}")
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+                last_error = e
+                try:
+                    self._pick_best_base(force=True)
+                except Exception:
+                    pass
+                if attempt == 0 and self.base_url:
+                    continue
+
+        raise Exception(
+            f"No se pudo conectar a ningún coordinador ({', '.join(self.base_urls)}). "
+            f"Último error: {last_error}"
+        )
     
     # Auth methods
     def register(self, username: str, password: str):

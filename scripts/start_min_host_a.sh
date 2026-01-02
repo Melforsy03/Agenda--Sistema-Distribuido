@@ -23,6 +23,22 @@ NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8501}
 WS_PORT=${WS_PORT:-8768}
 
+# Lista de coordinadores para el frontend (failover simple)
+API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700"}
+API_BASE_URLS_CONTAINER=""
+IFS=',' read -ra API_URLS_ARR <<<"$API_URLS_RAW"
+for url in "${API_URLS_ARR[@]}"; do
+  url=$(echo "$url" | xargs)
+  [[ -z "$url" ]] && continue
+  API_BASE_URLS_CONTAINER+="${API_BASE_URLS_CONTAINER:+,}${url}"
+done
+if [[ -z "$API_BASE_URLS_CONTAINER" ]]; then
+  API_BASE_URLS_CONTAINER="http://coordinator:8700"
+fi
+PRIMARY_API_BASE_URL=${API_BASE_URLS_CONTAINER%%,*}
+WS_HOST=$(echo "$PRIMARY_API_BASE_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
+WEBSOCKET_PORT_CONTAINER=8767
+
 if [[ -z "$HOST_B_IP" ]]; then
   echo "❌ Debes exportar HOST_B_IP. Ej: HOST_B_IP=192.168.171.147" >&2
   exit 1
@@ -72,9 +88,10 @@ docker rm -f frontend_a 2>/dev/null || true
 docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
-  -e API_BASE_URL=http://coordinator:8700 \
-  -e WEBSOCKET_HOST=coordinator \
-  -e WEBSOCKET_PORT=8767 \
+  -e API_BASE_URL=${PRIMARY_API_BASE_URL} \
+  -e API_BASE_URLS=${API_BASE_URLS_CONTAINER} \
+  -e WEBSOCKET_HOST=${WS_HOST:-coordinator} \
+  -e WEBSOCKET_PORT=${WEBSOCKET_PORT_CONTAINER} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
 echo "✅ Host A mínimo listo. Front: http://${SELF_IP}:${FRONT_PORT}"

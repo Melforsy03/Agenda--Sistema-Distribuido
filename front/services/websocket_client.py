@@ -6,6 +6,7 @@ import logging
 import atexit
 import warnings
 import threading
+from urllib.parse import urlparse
 from queue import Queue, Empty
 
 # Suppress specific websocket warnings
@@ -31,11 +32,37 @@ class WebSocketClient:
         self._bg_stop_event = threading.Event()
         self._bg_running = False
         self._bg_user_id: int | None = None
+        self._last_token: str | None = None
         
         # Register cleanup on exit
         if not self._cleanup_registered:
             atexit.register(self._sync_cleanup)
             self._cleanup_registered = True
+
+    def configure_from_base(self, base_url: str, ws_port: str | None = None):
+        """Ajusta host/puerto del WS para alinearlo con el coordinador activo."""
+        if not base_url:
+            return
+        parsed = urlparse(base_url)
+        host = parsed.hostname or self.host
+        port = ws_port or self.port
+        new_url = f"ws://{host}:{port}"
+        if new_url == self.url:
+            return
+
+        was_running = self._bg_thread and self._bg_thread.is_alive()
+        bg_user_id = self._bg_user_id
+        token = self._last_token
+
+        if was_running:
+            self.stop_background()
+
+        self.host = host
+        self.port = port
+        self.url = new_url
+
+        if was_running and bg_user_id and token:
+            self.start_background(bg_user_id, token)
         
     async def connect(self, user_id, token: str):
         """Connect to the WebSocket server"""
@@ -273,6 +300,7 @@ class WebSocketClient:
 
         self._bg_stop_event = threading.Event()
         self._bg_user_id = int(user_id)
+        self._last_token = token
 
         def _runner():
             self._bg_running = True

@@ -25,17 +25,25 @@ NETWORK=${NETWORK:-agenda_net}
 FRONT_PORT=${FRONT_PORT:-8501}
 WS_PORT=${WS_PORT:-8768}
 COORD_B_URL=${COORD_B_URL:-http://coordinator_b:8700}
-COORD_LB_URL=${COORD_LB_URL:-http://coordinator_lb:8700}
-# Extra: host/puerto derivados de COORD_LB_URL para API/WS
-LB_HOST=$(echo "$COORD_LB_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
-LB_PORT=$(echo "$COORD_LB_URL" | sed -nE 's#^https?://[^/:]+:([0-9]+).*#\1#p')
-LB_PORT=${LB_PORT:-8700}
-# API interno para el contenedor frontend
-API_BASE_URL_CONTAINER="$COORD_LB_URL"
-if [[ "$LB_HOST" =~ ^(localhost|127\\.|::1)$ ]]; then
-  API_BASE_URL_CONTAINER="http://coordinator:8700"
-  echo "ℹ️ COORD_LB_URL usa localhost; dentro del contenedor se usará ${API_BASE_URL_CONTAINER}"
+# Lista de coordinadores para el frontend (failover simple) sin balanceador
+API_URLS_RAW=${FRONT_API_URLS:-"http://coordinator:8700,${COORD_B_URL}"}
+API_BASE_URLS_CONTAINER=""
+IFS=',' read -ra API_URLS_ARR <<<"$API_URLS_RAW"
+for url in "${API_URLS_ARR[@]}"; do
+  url=$(echo "$url" | xargs)
+  [[ -z "$url" ]] && continue
+  host=$(echo "$url" | sed -E 's#^https?://([^/:]+).*#\1#')
+  if [[ "$host" =~ ^(localhost|127\\.|::1)$ ]]; then
+    url="http://coordinator:8700"
+  fi
+  API_BASE_URLS_CONTAINER+="${API_BASE_URLS_CONTAINER:+,}${url}"
+done
+if [[ -z "$API_BASE_URLS_CONTAINER" ]]; then
+  API_BASE_URLS_CONTAINER="http://coordinator:8700"
 fi
+PRIMARY_API_BASE_URL=${API_BASE_URLS_CONTAINER%%,*}
+WS_HOST=$(echo "$PRIMARY_API_BASE_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
+WEBSOCKET_PORT_CONTAINER=8767
 
 if [[ -z "$HOST_B_IP" ]]; then
   echo "❌ Debes exportar HOST_B_IP. Ej: HOST_B_IP=192.168.171.147" >&2
@@ -134,38 +142,10 @@ docker rm -f frontend_a 2>/dev/null || true
 docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -p ${FRONT_PORT}:8501 \
   -e PYTHONPATH="/app/front:/app" \
-  -e API_BASE_URL=${API_BASE_URL_CONTAINER} \
-  -e WEBSOCKET_HOST=${LB_HOST} \
-  -e WEBSOCKET_PORT=${LB_PORT} \
+  -e API_BASE_URL=${PRIMARY_API_BASE_URL} \
+  -e API_BASE_URLS=${API_BASE_URLS_CONTAINER} \
+  -e WEBSOCKET_HOST=${WS_HOST:-coordinator} \
+  -e WEBSOCKET_PORT=${WEBSOCKET_PORT_CONTAINER} \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
-
-# Levantar siempre watcher + LB local con Traefik usando lista dinámica de coordinadores
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SERVERS_FILE=${SERVERS_FILE:-$(pwd)/servers.json}
-SEEDS=${SEEDS:-"http://coordinator:8700,${COORD_B_URL}"}
-# Matar watcher previo si existe
-pkill -f "watch_coordinators.sh.*${SERVERS_FILE}" 2>/dev/null || true
-# Crear archivo base para que start_lb use provider file desde el inicio
-if [[ ! -f "$SERVERS_FILE" ]]; then
-  cat >"$SERVERS_FILE" <<'EOF'
-{
-  "http": {
-    "routers": {
-      "coordinator": { "rule": "PathPrefix(`/`)", "service": "coordinators" }
-    },
-    "services": {
-      "coordinators": { "loadBalancer": { "servers": [], "passHostHeader": true } }
-    }
-  }
-}
-EOF
-fi
-OUT="$SERVERS_FILE" SEEDS="$SEEDS" INTERVAL="${LB_WATCH_INTERVAL:-5}" bash "${SCRIPT_DIR}/watch_coordinators.sh" >/tmp/coord_watch_a.log 2>&1 &
-# Esperar a que el watcher escriba algo útil
-for _ in {1..5}; do
-  if [[ -s "$SERVERS_FILE" ]]; then break; fi
-  sleep 1
-done
-STATIC_SERVERS_FILE="$SERVERS_FILE" LB_PORT="${LB_PORT:-8702}" NETWORK="$NETWORK" bash "${SCRIPT_DIR}/start_lb.sh"
 
 echo "✅ Host A listo. Front: http://${SELF_IP}:${FRONT_PORT}"

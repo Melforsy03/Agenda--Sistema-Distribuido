@@ -13,7 +13,7 @@ docker volume create agenda_data  # para backend DB
 cd "/home/melani/Escritorio/Agenda Disitribuida/Agenda"
 
 HOST_B_IP=192.168.20.147 \
-FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700"\
+FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700" \
 WS_PORT=8767 \
 bash scripts/start_host_a.sh
 

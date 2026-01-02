@@ -182,8 +182,6 @@ def main():
         ws_client.start_background(int(st.session_state.user_id), st.session_state.session_token)
         ws_client.dispatch_pending(max_items=200)
         st.session_state.websocket_connected = bool(ws_client.connected)
-        if not st.session_state.websocket_connected:
-            st.sidebar.warning("⚠️ WebSocket desconectado (sin tiempo real)")
 
         # Obtener conteos de invitaciones pendientes
         try:

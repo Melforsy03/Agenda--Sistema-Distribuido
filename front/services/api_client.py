@@ -47,6 +47,34 @@ class APIClient:
         alive.sort(key=lambda x: x[0])
         return [c for _, c in alive]
 
+    def _normalize_url(self, url: str) -> str:
+        return url.strip().rstrip("/")
+
+    def _refresh_peers(self):
+        """Descubre coordinadores adicionales consultando /coordinators/peers."""
+        candidates = list(self.base_urls)
+        updated = False
+        for base in candidates:
+            try:
+                resp = requests.get(f"{base}/coordinators/peers", timeout=2.0)
+                resp.raise_for_status()
+                data = resp.json()
+                for c in data.get("coordinators", []):
+                    if isinstance(c, str):
+                        norm = self._normalize_url(c)
+                        with self._lock:
+                            if norm and norm not in self.base_urls:
+                                self.base_urls.append(norm)
+                                updated = True
+            except Exception:
+                continue
+        if updated:
+            # Si hay nuevos peers, forzar una selección fresca
+            try:
+                self._pick_best_base(force=True)
+            except Exception:
+                pass
+
     def _pick_best_base(self, force: bool = False) -> Optional[str]:
         """Elige el coordinador con menor latencia entre los que respondan."""
         now = time.time()
@@ -147,6 +175,7 @@ class APIClient:
         def _probe_loop():
             while True:
                 try:
+                    self._refresh_peers()
                     self._pick_best_base(force=True)
                 except Exception:
                     pass

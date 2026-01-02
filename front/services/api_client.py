@@ -1,6 +1,7 @@
 import requests
 import os
 import time
+import threading
 from typing import Optional, List
 from urllib.parse import urlparse
 
@@ -18,7 +19,10 @@ class APIClient:
         self.base_url: Optional[str] = None
         self._last_probe = 0.0
         self._probe_ttl = float(os.getenv("API_COORD_PROBE_TTL", "30") or 30)
+        self._probe_interval = float(os.getenv("API_COORD_PROBE_INTERVAL", "5") or 5)
+        self._lock = threading.Lock()
         self._pick_best_base(force=True)
+        self._start_probe_thread()
 
     def _ping_base(self, base_url: str, timeout: float = 1.5) -> Optional[float]:
         """Devuelve latencia de /health o None si falla."""
@@ -35,8 +39,9 @@ class APIClient:
     def _pick_best_base(self, force: bool = False) -> Optional[str]:
         """Elige el coordinador con menor latencia entre los que respondan."""
         now = time.time()
-        if self.base_url and not force and (now - self._last_probe) < self._probe_ttl:
-            return self.base_url
+        with self._lock:
+            if self.base_url and not force and (now - self._last_probe) < self._probe_ttl:
+                return self.base_url
 
         best = None
         best_latency = None
@@ -48,13 +53,14 @@ class APIClient:
                 best = candidate
                 best_latency = latency
 
-        if best:
-            self.base_url = best
-            self._last_probe = now
-            return best
+        with self._lock:
+            if best:
+                self.base_url = best
+                self._last_probe = now
+                return best
 
-        if self.base_url:
-            return self.base_url
+            if self.base_url:
+                return self.base_url
         raise Exception("No se pudo contactar a ningún coordinador configurado")
 
     def get_current_base_url(self) -> Optional[str]:
@@ -120,6 +126,22 @@ class APIClient:
             f"No se pudo conectar a ningún coordinador ({', '.join(self.base_urls)}). "
             f"Último error: {last_error}"
         )
+
+    def _start_probe_thread(self):
+        """Lanza un hilo en segundo plano para mantener fresca la selección de coordinador."""
+        if self._probe_interval <= 0:
+            return
+
+        def _probe_loop():
+            while True:
+                try:
+                    self._pick_best_base(force=True)
+                except Exception:
+                    pass
+                time.sleep(self._probe_interval)
+
+        t = threading.Thread(target=_probe_loop, daemon=True)
+        t.start()
     
     # Auth methods
     def register(self, username: str, password: str):

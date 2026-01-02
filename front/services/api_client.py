@@ -36,6 +36,17 @@ class APIClient:
         except Exception:
             return None
 
+    def _alive_bases(self) -> list[str]:
+        """Devuelve lista de coordinadores vivos ordenados por latencia."""
+        alive = []
+        for candidate in self.base_urls:
+            latency = self._ping_base(candidate)
+            if latency is None:
+                continue
+            alive.append((latency, candidate))
+        alive.sort(key=lambda x: x[0])
+        return [c for _, c in alive]
+
     def _pick_best_base(self, force: bool = False) -> Optional[str]:
         """Elige el coordinador con menor latencia entre los que respondan."""
         now = time.time()
@@ -43,24 +54,14 @@ class APIClient:
             if self.base_url and not force and (now - self._last_probe) < self._probe_ttl:
                 return self.base_url
 
-        best = None
-        best_latency = None
-        for candidate in self.base_urls:
-            latency = self._ping_base(candidate)
-            if latency is None:
-                continue
-            if best is None or latency < best_latency:
-                best = candidate
-                best_latency = latency
-
+        alive = self._alive_bases()
         with self._lock:
-            if best:
-                self.base_url = best
+            if alive:
+                self.base_url = alive[0]
                 self._last_probe = now
-                return best
-
-            if self.base_url:
                 return self.base_url
+            # Si no hay vivos y teníamos uno anterior, lo descartamos para evitar quedarnos pegados
+            self.base_url = None
         raise Exception("No se pudo contactar a ningún coordinador configurado")
 
     def get_current_base_url(self) -> Optional[str]:
@@ -79,7 +80,10 @@ class APIClient:
         
     def _make_request(self, method, endpoint, token=None, **kwargs):
         """Make HTTP request to the API"""
-        self._pick_best_base()
+        try:
+            self._pick_best_base()
+        except Exception:
+            pass
         if not self.base_url:
             raise Exception("No hay coordinador disponible")
 
@@ -88,9 +92,22 @@ class APIClient:
             headers['Authorization'] = f"Bearer {token}"
             
         last_error = None
-        # Intentar con el coordinador seleccionado; si cae, re-evaluar y reintentar una vez
-        for attempt in range(2):
-            url = f"{self.base_url}{endpoint}"
+        tried = []
+        # Intentar con el coordinador seleccionado; si cae, probar otros vivos por latencia
+        for attempt in range(len(self.base_urls)):
+            if attempt == 0:
+                base = self.base_url
+            else:
+                alive = [b for b in self._alive_bases() if b not in tried]
+                base = alive[0] if alive else None
+                if base:
+                    with self._lock:
+                        self.base_url = base
+                        self._last_probe = time.time()
+            tried.append(base)
+            if not base:
+                break
+            url = f"{base}{endpoint}"
             try:
                 response = requests.request(method, url, headers=headers, **kwargs)
                 response.raise_for_status()
@@ -115,12 +132,7 @@ class APIClient:
                     raise Exception(f"Error: {error_detail}")
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
                 last_error = e
-                try:
-                    self._pick_best_base(force=True)
-                except Exception:
-                    pass
-                if attempt == 0 and self.base_url:
-                    continue
+                continue
 
         raise Exception(
             f"No se pudo conectar a ningún coordinador ({', '.join(self.base_urls)}). "

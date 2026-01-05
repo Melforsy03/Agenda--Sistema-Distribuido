@@ -70,6 +70,7 @@ class RaftNode:
         # Prioridad para Bully (derivada del URL/ID numérico)
         self.priority = self._priority_of_url(self.self_url)
         self._last_preempt_attempt = 0.0
+        self._last_preempt_attempt = 0.0
         
         # Configuración de timeouts
         self.heartbeat_interval = heartbeat_interval
@@ -197,6 +198,17 @@ class RaftNode:
         """Si somos el de mayor prioridad conocido, arranca elección para liderar."""
         await asyncio.sleep(0)  # cede control para permitir setup de loops
         if not self.is_leader() and self._is_highest_priority():
+            now = time.time()
+            if now - self._last_preempt_attempt > (self.election_timeout / 2):
+                self._last_preempt_attempt = now
+                await self._start_bully_election()
+
+    async def _maybe_challenge_lower_priority_leader(self, leader_id: str):
+        """Si el líder visto tiene menor prioridad que nosotros, forzamos elección."""
+        if not leader_id:
+            return
+        leader_prio = self._priority_of_url(leader_id)
+        if self.priority > leader_prio:
             now = time.time()
             if now - self._last_preempt_attempt > (self.election_timeout / 2):
                 self._last_preempt_attempt = now
@@ -725,6 +737,8 @@ class RaftNode:
             self.reset_election_timer()
             self.role = RaftRole.FOLLOWER
             self.leader_id = leader_id
+            # Si tenemos más prioridad que el líder actual, gatilla reelección.
+            asyncio.create_task(self._maybe_challenge_lower_priority_leader(leader_id))
 
             # Verificar consistencia del log
             if prev_log_index > 0:
@@ -774,6 +788,8 @@ class RaftNode:
                 self.leader_id = leader_id
                 self.reset_election_timer()
                 self.save_state()
+                # Si vemos heartbeats de un líder con menor prioridad, forzamos elección.
+                asyncio.create_task(self._maybe_challenge_lower_priority_leader(leader_id))
 
     # ====================================================
     # Bully handlers

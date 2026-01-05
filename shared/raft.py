@@ -7,6 +7,7 @@ import time
 from enum import Enum
 from typing import List, Optional, Dict, Any
 import logging
+from urllib.parse import urlparse
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +69,7 @@ class RaftNode:
 
         # Prioridad para Bully (derivada del URL/ID numérico)
         self.priority = self._priority_of_url(self.self_url)
+        self._last_preempt_attempt = 0.0
         
         # Configuración de timeouts
         self.heartbeat_interval = heartbeat_interval
@@ -166,7 +168,18 @@ class RaftNode:
         return ordered[: max(0, self.replication_factor - 1)]
 
     def _priority_of_url(self, url: str) -> int:
-        """Extrae una prioridad numérica desde el URL (p.ej. puerto) o node_id."""
+        """Deriva prioridad solo desde el puerto del URL; fallback a dígitos si no hay puerto."""
+        if not url:
+            return 0
+        try:
+            parsed = urlparse(url if "://" in url else f"http://{url}")
+            if parsed.port:
+                return int(parsed.port)
+            host_digits = "".join([c for c in (parsed.hostname or "") if c.isdigit()])
+            if host_digits:
+                return int(host_digits)
+        except Exception:
+            pass
         digits = "".join([c for c in url if c.isdigit()])
         return int(digits) if digits else 0
 
@@ -174,6 +187,20 @@ class RaftNode:
         """Peers con prioridad mayor que la nuestra (Bully)."""
         my_prio = self.priority
         return [p for p in self.peers if self._priority_of_url(p) > my_prio]
+
+    def _is_highest_priority(self) -> bool:
+        """True si somos el mayor (o empatados) en prioridad conocida."""
+        all_prios = [self.priority] + [self._priority_of_url(p) for p in self.peers]
+        return self.priority >= max(all_prios) if all_prios else True
+
+    async def _maybe_preempt_as_highest(self):
+        """Si somos el de mayor prioridad conocido, arranca elección para liderar."""
+        await asyncio.sleep(0)  # cede control para permitir setup de loops
+        if not self.is_leader() and self._is_highest_priority():
+            now = time.time()
+            if now - self._last_preempt_attempt > (self.election_timeout / 2):
+                self._last_preempt_attempt = now
+                await self._start_bully_election()
 
     def _set_peers(self, peers: List[str], persist: bool = True):
         """Actualiza peers en memoria (y opcionalmente persiste)."""
@@ -222,6 +249,8 @@ class RaftNode:
         asyncio.create_task(self._heartbeat_loop())
         asyncio.create_task(self._apply_committed_entries())
         asyncio.create_task(self._consistency_loop())
+        # Si somos el de mayor prioridad conocido, forzamos elección al arrancar para liderar.
+        asyncio.create_task(self._maybe_preempt_as_highest())
 
     async def _election_loop(self):
         """Maneja las elecciones de líder"""

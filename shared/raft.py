@@ -429,7 +429,7 @@ class RaftNode:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
                 data = {
                     "term": self.current_term,
-                    "leader_id": self.node_id,
+                    "leader_id": self.self_url or self.node_id,
                     "prev_log_index": prev_log_index,
                     "prev_log_term": prev_log_term,
                     "entries": entries,
@@ -736,7 +736,8 @@ class RaftNode:
             # Resetear temporizador de elección
             self.reset_election_timer()
             self.role = RaftRole.FOLLOWER
-            self.leader_id = leader_id
+            # Preferimos la URL si viene (para respetar prioridad por puerto)
+            self.leader_id = leader_id or self.leader_id
             # Si tenemos más prioridad que el líder actual, gatilla reelección.
             asyncio.create_task(self._maybe_challenge_lower_priority_leader(leader_id))
 
@@ -785,7 +786,7 @@ class RaftNode:
             if term >= self.current_term:
                 self.current_term = term
                 self.role = RaftRole.FOLLOWER
-                self.leader_id = leader_id
+                self.leader_id = leader_id or self.leader_id
                 self.reset_election_timer()
                 self.save_state()
                 # Si vemos heartbeats de un líder con menor prioridad, forzamos elección.

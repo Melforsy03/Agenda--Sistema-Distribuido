@@ -683,34 +683,11 @@ elif "EVENTOS" in SHARD_NAME:
         rows = cursor.fetchall()
         events = []
         for r in rows:
-            event_id = r[0]
-            is_group_event = bool(r[8])
-            is_accepted = int(r[9])
-            is_hierarchical_event = bool(r[10])
-            is_creator = int(user_id) == int(r[5])
-
-            # NO mostrar en calendario si:
-            # 1. El evento fue rechazado (is_accepted=0) Y NO es jerárquico Y NO estamos en vista "pending"
-            if filter_type != "pending" and is_accepted == 0 and not is_hierarchical_event:
-                continue
-
-            # Para eventos grupales NO jerárquicos: solo mostrar si TODOS los participantes aceptaron
-            if is_group_event and not is_hierarchical_event and filter_type != "pending":
-                # Verificar si todos los participantes aceptaron
-                cursor.execute("SELECT COUNT(*), SUM(CASE WHEN is_accepted = 1 THEN 1 ELSE 0 END) FROM event_participants WHERE event_id = ?", (event_id,))
-                count_row = cursor.fetchone()
-                if count_row:
-                    total_participants = count_row[0]
-                    accepted_count = count_row[1] or 0
-                    # Si no todos aceptaron, no mostrar el evento para NADIE (incluso el creador)
-                    if accepted_count < total_participants:
-                        continue
-
             events.append({
-                "id": event_id, "title": r[1], "description": r[2], "start_time": r[3], "end_time": r[4],
+                "id": r[0], "title": r[1], "description": r[2], "start_time": r[3], "end_time": r[4],
                 "creator_id": r[5], "creator_name": r[6], "group_id": r[7], "group_name": None,
-                "is_group_event": is_group_event, "is_accepted": is_accepted, "is_creator": is_creator,
-                "is_hierarchical_event": is_hierarchical_event
+                "is_group_event": bool(r[8]), "is_accepted": int(r[9]), "is_creator": int(user_id) == int(r[5]),
+                "is_hierarchical_event": bool(r[10])
             })
         return events
 

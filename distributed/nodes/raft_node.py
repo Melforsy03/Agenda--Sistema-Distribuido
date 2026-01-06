@@ -417,8 +417,8 @@ elif "GRUPOS" in SHARD_NAME:
 
     @app.get("/groups/{group_id}/members")
     def group_members(group_id: int):
-        cursor.execute("SELECT user_id, COALESCE(username, CAST(user_id AS TEXT)) FROM group_members WHERE group_id=?", (group_id,))
-        return [(r[0], r[1]) for r in cursor.fetchall()]
+        cursor.execute("SELECT user_id, COALESCE(username, CAST(user_id AS TEXT)), is_leader FROM group_members WHERE group_id=?", (group_id,))
+        return [(r[0], r[1], r[2]) for r in cursor.fetchall()]
 
     @app.get("/groups/{group_id}/info")
     def group_info(group_id: int):

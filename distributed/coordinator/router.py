@@ -846,6 +846,247 @@ async def get_group_info(group_id: int, token: str):
             continue
     raise HTTPException(status_code=404, detail="Grupo no encontrado")
 
+@app.get("/groups/{group_id}/agendas")
+async def get_group_agendas(group_id: int, token: str, start_date: str, end_date: str):
+    """
+    Ver agendas del grupo en un intervalo [start_date, end_date].
+    Fechas esperadas: 'YYYY-MM-DD HH:MM:SS'
+    """
+    user_data = await validate_token(token)
+    viewer_id = user_data.get("user_id")
+
+    # Verificar que el usuario pertenece al grupo
+    members = await _get_group_member_ids(group_id)
+    if viewer_id not in members:
+        raise HTTPException(status_code=403, detail="No perteneces a este grupo")
+
+    # Obtener información del grupo para saber si es jerárquico
+    group_info = None
+    for node_url in SHARDS["groups"]:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{node_url}/groups/{group_id}/info")
+                group_info = resp.json()
+                if group_info:
+                    break
+        except Exception:
+            continue
+
+    if not group_info:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado")
+
+    is_hierarchical = group_info.get("is_hierarchical", False)
+
+    # Obtener miembros con sus roles
+    members_with_roles = []
+    for node_url in SHARDS["groups"]:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{node_url}/groups/{group_id}/members")
+                members_data = resp.json()
+                if isinstance(members_data, list):
+                    members_with_roles = members_data
+                    break
+        except Exception:
+            continue
+
+    # Determinar miembros accesibles según jerarquía
+    accessible_members = []
+    viewer_is_leader = False
+
+    for member in members_with_roles:
+        if isinstance(member, (list, tuple)):
+            member_id = int(member[0])
+            username = member[1] if len(member) > 1 else str(member_id)
+            is_leader = bool(member[2]) if len(member) > 2 else False
+        else:
+            member_id = int(member.get("user_id", 0))
+            username = member.get("username", str(member_id))
+            is_leader = bool(member.get("is_leader", False))
+
+        if member_id == viewer_id:
+            viewer_is_leader = is_leader
+
+        # Lógica de acceso
+        if member_id == viewer_id:
+            accessible_members.append((member_id, username))
+        elif not is_hierarchical:
+            # Grupo no jerárquico: todos pueden ver a todos
+            accessible_members.append((member_id, username))
+        elif viewer_is_leader and not is_leader:
+            # Líder puede ver agendas de miembros regulares
+            accessible_members.append((member_id, username))
+
+    if not accessible_members:
+        raise HTTPException(status_code=403, detail="No tienes permisos para ver agendas de este grupo")
+
+    # Construir resultado
+    group_agendas = {}
+
+    for member_id, username in accessible_members:
+        # Obtener eventos del usuario en el rango de fechas desde todos los shards de eventos
+        events = []
+        for shard in _iter_event_shards():
+            for node_url in SHARDS[shard]:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.get(f"{node_url}/events/detailed", params={"user_id": member_id, "filter_type": "accepted"})
+                        data = resp.json()
+                        if isinstance(data, list):
+                            events.extend(data)
+                            break
+                except Exception:
+                    continue
+
+        # Filtrar por rango de fechas y aplicar privacidad
+        filtered_events = []
+        for event in events:
+            start_time = event.get("start_time", "")
+            end_time = event.get("end_time", "")
+
+            # Verificar que el evento está en el rango solicitado
+            if start_time >= start_date and end_time <= end_date:
+                # Solo aceptados
+                if event.get("is_accepted", 0) != 1:
+                    continue
+
+                # Privacidad: si el evento no corresponde al grupo consultado, ocultar detalles
+                event_group_id = event.get("group_id")
+                is_group_event = event.get("is_group_event", False)
+                show_details = bool(is_group_event) and event_group_id == group_id
+
+                safe_title = event.get("title") if show_details else "Ocupado"
+                safe_description = event.get("description") if show_details else None
+
+                filtered_events.append({
+                    'id': event.get('id'),
+                    'title': safe_title,
+                    'description': safe_description,
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'is_group_event': is_group_event,
+                    'group_name': event.get('group_name'),
+                    'creator_id': event.get('creator_id'),
+                    'is_private': not show_details,
+                })
+
+        group_agendas[username] = {
+            'user_id': member_id,
+            'events': filtered_events
+        }
+
+    return group_agendas
+
+@app.get("/groups/{group_id}/availability/common")
+async def get_common_availability(group_id: int, token: str, start_date: str, end_date: str, duration_hours: float = 1.0):
+    """Horarios comunes disponibles para todo el grupo."""
+    from datetime import datetime, timedelta
+
+    user_data = await validate_token(token)
+    viewer_id = user_data.get("user_id")
+
+    # Validar acceso al grupo (misma regla que agendas)
+    members = await _get_group_member_ids(group_id)
+    if viewer_id not in members:
+        raise HTTPException(status_code=403, detail="No perteneces a este grupo")
+
+    if not members:
+        return []
+
+    # Convertir fechas a datetime (asumiendo formato 'YYYY-MM-DD HH:MM:SS' o 'YYYY-MM-DD')
+    try:
+        if len(start_date.split()) == 1:
+            start_dt = datetime.strptime(f"{start_date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+        else:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
+
+        if len(end_date.split()) == 1:
+            end_dt = datetime.strptime(f"{end_date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+        else:
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use 'YYYY-MM-DD' o 'YYYY-MM-DD HH:MM:SS'")
+
+    # Definir horario laboral (9:00 - 18:00)
+    work_start_hour = 9
+    work_end_hour = 18
+
+    # Generar slots candidatos
+    slots = []
+    current = start_dt.replace(hour=work_start_hour, minute=0, second=0)
+    slot_duration = timedelta(hours=duration_hours)
+
+    while current <= end_dt:
+        # Solo considerar horarios dentro del horario laboral
+        if work_start_hour <= current.hour < work_end_hour:
+            slot_end = current + slot_duration
+
+            # Verificar que el slot completo está dentro del horario laboral
+            if slot_end.hour <= work_end_hour:
+                slots.append({
+                    'start': current,
+                    'end': slot_end
+                })
+
+        current += timedelta(minutes=30)
+
+        # Saltar al siguiente día si pasamos las 18:00
+        if current.hour >= work_end_hour:
+            current = current.replace(hour=work_start_hour, minute=0) + timedelta(days=1)
+
+    # Obtener eventos de todos los miembros
+    member_events = {}
+    for member_id in members:
+        events = []
+        for shard in _iter_event_shards():
+            for node_url in SHARDS[shard]:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.get(f"{node_url}/events/detailed", params={"user_id": member_id, "filter_type": "accepted"})
+                        data = resp.json()
+                        if isinstance(data, list):
+                            events.extend(data)
+                            break
+                except Exception:
+                    continue
+        member_events[member_id] = events
+
+    # Filtrar slots que están libres para TODOS los miembros
+    available_slots = []
+
+    for slot in slots:
+        is_available_for_all = True
+
+        for member_id in members:
+            # Verificar si el miembro tiene conflictos en este slot
+            has_conflict = False
+            for event in member_events.get(member_id, []):
+                if event.get("is_accepted", 0) != 1:
+                    continue
+
+                try:
+                    event_start = datetime.strptime(event.get("start_time", ""), '%Y-%m-%d %H:%M:%S')
+                    event_end = datetime.strptime(event.get("end_time", ""), '%Y-%m-%d %H:%M:%S')
+
+                    # Verificar solapamiento
+                    if not (slot['end'] <= event_start or slot['start'] >= event_end):
+                        has_conflict = True
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+            if has_conflict:
+                is_available_for_all = False
+                break
+
+        if is_available_for_all:
+            available_slots.append({
+                'start_time': slot['start'].strftime('%Y-%m-%d %H:%M:%S'),
+                'end_time': slot['end'].strftime('%Y-%m-%d %H:%M:%S')
+            })
+
+    return available_slots
+
 @app.put("/groups/{group_id}")
 async def update_group(group_id: int, update: dict, token: str):
     await validate_token(token)

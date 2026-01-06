@@ -137,25 +137,27 @@ def show_groups_list(user_id, api_client, token):
                 # Mostrar miembros con sus roles y opciones de gestión
                 try:
                     members = api_client.list_group_members(gid, token)
-                    
+
                     # Obtener el nombre del creador
                     creator_name = None
                     if creator_id is not None:
-                        for member_id, member_name in members:
+                        for member_info in members:
+                            member_id = member_info[0]
+                            member_name = member_info[1]
                             if member_id == creator_id:
                                 creator_name = member_name
                                 break
-                    
+
                     # Mostrar creador si existe
                     if creator_name:
                         st.write(f"**👑 Creador:** {creator_name}")
                         # Separar creador de otros miembros
-                        other_members = [username for mid, username in members if mid != creator_id]
+                        other_members = [member_info[1] for member_info in members if member_info[0] != creator_id]
                         if other_members:
                             st.write("**👥 Miembros:** " + ", ".join(other_members))
                     else:
                         # Si no se identificó creador, mostrar todos como miembros
-                        st.write("**👥 Miembros:** " + ", ".join([username for _, username in members]))
+                        st.write("**👥 Miembros:** " + ", ".join([member_info[1] for member_info in members]))
 
                     # NUEVO: Gestión de miembros para líderes
                     if is_leader:
@@ -308,7 +310,9 @@ def show_member_management(leader_id, group_id, member_details, api_client, toke
     removable_members = [(m[0], m[1]) for m in member_details if m[0] != leader_id]
 
     if removable_members:
-        for member_id, username in removable_members:
+        for member_info in removable_members:
+            member_id = member_info[0]
+            username = member_info[1]
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.write(f"👤 {username}")

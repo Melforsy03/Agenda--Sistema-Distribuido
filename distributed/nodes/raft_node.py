@@ -240,6 +240,74 @@ async def apply_log_entry(entry):
             (1 if p.get("accepted") else 0, p.get("event_id"), p.get("user_id"))
         )
         conn.commit()
+    elif t == "UPDATE_GROUP" and "GRUPOS" in SHARD_NAME:
+        # Actualizar nombre y/o descripción del grupo
+        name = p.get("name")
+        description = p.get("description")
+        group_id = p.get("group_id")
+        if name and description is not None:
+            cursor.execute("UPDATE groups SET name=?, description=? WHERE id=?", (name, description, group_id))
+        elif name:
+            cursor.execute("UPDATE groups SET name=? WHERE id=?", (name, group_id))
+        elif description is not None:
+            cursor.execute("UPDATE groups SET description=? WHERE id=?", (description, group_id))
+        conn.commit()
+    elif t == "DELETE_GROUP" and "GRUPOS" in SHARD_NAME:
+        # Eliminar grupo y sus relaciones
+        group_id = p.get("group_id")
+        cursor.execute("DELETE FROM group_invitations WHERE group_id=?", (group_id,))
+        cursor.execute("DELETE FROM group_members WHERE group_id=?", (group_id,))
+        cursor.execute("DELETE FROM groups WHERE id=?", (group_id,))
+        conn.commit()
+    elif t == "DELETE_MEMBER" and "GRUPOS" in SHARD_NAME:
+        # Eliminar un miembro del grupo
+        group_id = p.get("group_id")
+        member_id = p.get("member_id")
+        cursor.execute("DELETE FROM group_members WHERE group_id=? AND user_id=?", (group_id, member_id))
+        conn.commit()
+    elif t == "UPDATE_EVENT" and "EVENTOS" in SHARD_NAME:
+        # Actualizar un evento
+        event_id = p.get("event_id")
+        title = p.get("title")
+        description = p.get("description")
+        start_time = p.get("start_time")
+        end_time = p.get("end_time")
+
+        # Construir la query de actualización dinámicamente
+        updates = []
+        params = []
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if start_time is not None:
+            updates.append("start_time = ?")
+            params.append(start_time)
+        if end_time is not None:
+            updates.append("end_time = ?")
+            params.append(end_time)
+
+        if updates:
+            params.append(event_id)
+            query = f"UPDATE events SET {', '.join(updates)} WHERE id = ?"
+            cursor.execute(query, tuple(params))
+
+        # Si cambió el horario, resetear aceptación de participantes (excepto creador)
+        time_changed = p.get("time_changed", False)
+        if time_changed:
+            cursor.execute("SELECT creator_id FROM events WHERE id=?", (event_id,))
+            row = cursor.fetchone()
+            if row:
+                creator_id = row[0]
+                cursor.execute(
+                    "UPDATE event_participants SET is_accepted = 0 WHERE event_id = ? AND user_id != ?",
+                    (event_id, creator_id)
+                )
+
+        conn.commit()
 
 
 raft = RaftNode(
@@ -478,6 +546,99 @@ elif "GRUPOS" in SHARD_NAME:
         raft.save_state()
         return {"status": "ok", "message": "Respuesta registrada"}
 
+    @app.put("/groups/{group_id}")
+    async def update_group(group_id: int, update: dict):
+        """Actualizar nombre y/o descripción del grupo"""
+        if not raft.is_leader():
+            return {"error": "No soy el líder", "leader": raft.leader_id}
+
+        # Verificar que el grupo existe y obtener su creador
+        cursor.execute("SELECT creator_id FROM groups WHERE id=?", (group_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Grupo no encontrado"}
+
+        user_id = update.get("user_id")
+        if not user_id:
+            return {"error": "user_id requerido"}
+
+        # Verificar que el usuario es líder del grupo
+        cursor.execute("SELECT is_leader FROM group_members WHERE group_id=? AND user_id=?", (group_id, user_id))
+        member = cursor.fetchone()
+        if not member or not member[0]:
+            return {"error": "Solo los líderes pueden editar el grupo"}
+
+        # Preparar payload
+        payload = {"group_id": group_id}
+        if update.get("name"):
+            payload["name"] = update["name"]
+        if "description" in update:
+            payload["description"] = update["description"]
+
+        cmd = json.dumps({"type": "UPDATE_GROUP", "payload": payload})
+        entry = raft.append_log(cmd)
+        replicated = await raft.replicate_log(entry)
+        if not replicated:
+            return {"error": "No se pudo replicar la actualización"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
+        return {"status": "ok", "message": "Grupo actualizado exitosamente"}
+
+    @app.delete("/groups/{group_id}")
+    async def delete_group(group_id: int, user_id: int):
+        """Eliminar un grupo completamente"""
+        if not raft.is_leader():
+            return {"error": "No soy el líder", "leader": raft.leader_id}
+
+        # Verificar que el grupo existe y obtener su creador
+        cursor.execute("SELECT creator_id FROM groups WHERE id=?", (group_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Grupo no encontrado"}
+
+        creator_id = row[0]
+        if creator_id != user_id:
+            return {"error": "Solo el creador del grupo puede eliminarlo"}
+
+        payload = {"group_id": group_id}
+        cmd = json.dumps({"type": "DELETE_GROUP", "payload": payload})
+        entry = raft.append_log(cmd)
+        replicated = await raft.replicate_log(entry)
+        if not replicated:
+            return {"error": "No se pudo replicar la eliminación"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
+        return {"status": "ok", "message": "Grupo eliminado exitosamente"}
+
+    @app.delete("/groups/{group_id}/members/{member_id}")
+    async def delete_member(group_id: int, member_id: int, requester_id: int):
+        """Eliminar un miembro del grupo"""
+        if not raft.is_leader():
+            return {"error": "No soy el líder", "leader": raft.leader_id}
+
+        # Verificar que el solicitante es líder del grupo
+        cursor.execute("SELECT is_leader FROM group_members WHERE group_id=? AND user_id=?", (group_id, requester_id))
+        requester = cursor.fetchone()
+        if not requester or not requester[0]:
+            return {"error": "Solo los líderes pueden eliminar miembros"}
+
+        # No permitir que el líder se elimine a sí mismo
+        if requester_id == member_id:
+            return {"error": "No puedes eliminarte a ti mismo del grupo"}
+
+        payload = {"group_id": group_id, "member_id": member_id}
+        cmd = json.dumps({"type": "DELETE_MEMBER", "payload": payload})
+        entry = raft.append_log(cmd)
+        replicated = await raft.replicate_log(entry)
+        if not replicated:
+            return {"error": "No se pudo replicar la eliminación del miembro"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
+        return {"status": "ok", "message": "Miembro eliminado exitosamente"}
+
 elif "EVENTOS" in SHARD_NAME:
     @app.post("/events")
     async def create_event(event: dict):
@@ -580,6 +741,59 @@ elif "EVENTOS" in SHARD_NAME:
             "creator_id": ev[5], "creator_name": ev[6], "group_id": ev[7], "group_name": None,
             "is_group_event": bool(ev[8]), "participants": participants
         }
+
+    @app.put("/events/{event_id}")
+    async def update_event(event_id: int, update: dict):
+        """Actualizar/replanificar un evento"""
+        if not raft.is_leader():
+            return {"error": "No soy el líder", "leader": raft.leader_id}
+
+        # Verificar que el evento existe y obtener su creador
+        cursor.execute("SELECT creator_id, start_time, end_time FROM events WHERE id=?", (event_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Evento no encontrado"}
+
+        creator_id = row[0]
+        old_start = row[1]
+        old_end = row[2]
+
+        requester_id = update.get("requester_id")
+        if not requester_id:
+            return {"error": "requester_id requerido"}
+
+        # Solo el creador puede editar
+        if int(creator_id) != int(requester_id):
+            return {"error": "Solo el creador puede modificar este evento"}
+
+        # Preparar payload
+        payload = {"event_id": event_id}
+        time_changed = False
+
+        if "title" in update:
+            payload["title"] = update["title"]
+        if "description" in update:
+            payload["description"] = update["description"]
+        if "start_time" in update:
+            payload["start_time"] = update["start_time"]
+            if update["start_time"] != old_start:
+                time_changed = True
+        if "end_time" in update:
+            payload["end_time"] = update["end_time"]
+            if update["end_time"] != old_end:
+                time_changed = True
+
+        payload["time_changed"] = time_changed
+
+        cmd = json.dumps({"type": "UPDATE_EVENT", "payload": payload})
+        entry = raft.append_log(cmd)
+        replicated = await raft.replicate_log(entry)
+        if not replicated:
+            return {"error": "No se pudo replicar la actualización"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
+        return {"status": "ok", "message": "Evento actualizado exitosamente"}
 
     @app.get("/events/conflicts")
     def event_conflicts(user_id: int, limit: int = 50):

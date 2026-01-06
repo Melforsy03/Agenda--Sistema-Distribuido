@@ -1089,7 +1089,12 @@ async def get_common_availability(group_id: int, token: str, start_date: str, en
 
 @app.put("/groups/{group_id}")
 async def update_group(group_id: int, update: dict, token: str):
-    await validate_token(token)
+    user_data = await validate_token(token)
+    user_id = user_data.get("user_id")
+
+    # Agregar user_id al payload
+    update["user_id"] = user_id
+
     try:
         leader_url = await get_leader("groups")
         async with httpx.AsyncClient(timeout=10.0) as client:

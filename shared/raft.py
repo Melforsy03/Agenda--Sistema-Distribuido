@@ -19,18 +19,54 @@ class RaftRole(str, Enum):
     LEADER = "leader"
 
 class LogEntry:
-    """Una entrada en el log de RAFT"""
-    def __init__(self, term: int, command: str, index: int = None):
+    """Una entrada en el log de RAFT con metadatos para resolución de conflictos"""
+    def __init__(self, term: int, command: str, index: int = None, 
+                 timestamp: float = None, originating_node: str = None):
         self.term = term
         self.command = command
         self.index = index
+        # Metadatos para resolución de conflictos
+        self.timestamp = timestamp if timestamp is not None else time.time()
+        self.originating_node = originating_node
+        self.vector_clock: Dict[str, int] = {}
 
     def to_dict(self):
-        return {"term": self.term, "command": self.command, "index": self.index}
+        return {
+            "term": self.term, 
+            "command": self.command, 
+            "index": self.index,
+            "timestamp": self.timestamp,
+            "originating_node": self.originating_node,
+            "vector_clock": self.vector_clock
+        }
 
     @staticmethod
     def from_dict(d):
-        return LogEntry(term=d["term"], command=d["command"], index=d.get("index"))
+        entry = LogEntry(
+            term=d["term"], 
+            command=d["command"], 
+            index=d.get("index"),
+            timestamp=d.get("timestamp"),
+            originating_node=d.get("originating_node")
+        )
+        entry.vector_clock = d.get("vector_clock", {})
+        return entry
+    
+    def is_concurrent_with(self, other: 'LogEntry') -> bool:
+        """Determina si dos entradas son concurrentes (no causalmente relacionadas)"""
+        if not self.vector_clock or not other.vector_clock:
+            # Sin vector clocks, asumir concurrencia
+            return True
+        
+        vc1 = self.vector_clock
+        vc2 = other.vector_clock
+        
+        # e1 happened-before e2 si vc1 <= vc2 para todos los nodos
+        vc1_before_vc2 = all(vc1.get(k, 0) <= vc2.get(k, 0) for k in set(vc1) | set(vc2))
+        vc2_before_vc1 = all(vc2.get(k, 0) <= vc1.get(k, 0) for k in set(vc1) | set(vc2))
+        
+        # Concurrentes si ninguna es antes de la otra
+        return not (vc1_before_vc2 or vc2_before_vc1)
 
 class RaftNode:
     """
@@ -292,8 +328,8 @@ class RaftNode:
             # Empuja estado a peers vivos y detecta rezagos
             for peer in self.peers:
                 await self._sync_peer_state(peer)
-                # Además, si el peer tiene entradas que nosotros no, intente reconciliarlas
-                await self._reconcile_from_peer(peer)
+                # Reconciliación semántica con detección de conflictos
+                await self._reconcile_from_peer_semantic(peer)
 
     async def _apply_committed_entries(self):
         """Aplica las entradas comprometidas a la máquina de estado"""
@@ -484,7 +520,13 @@ class RaftNode:
         if not self.is_leader():
             raise Exception("Solo el líder puede agregar entradas al log")
         
-        entry = LogEntry(self.current_term, command, index=len(self.log) + 1)
+        entry = LogEntry(
+            term=self.current_term, 
+            command=command, 
+            index=len(self.log) + 1,
+            timestamp=time.time(),
+            originating_node=self.node_id
+        )
         self.log.append(entry)
         self.save_state()
         return entry
@@ -620,6 +662,133 @@ class RaftNode:
             await self.apply_to_state_machine(entry)
             # Replicar al resto
             await self.replicate_log(entry)
+
+    async def _reconcile_from_peer_semantic(self, peer: str):
+        """Reconciliación con resolución semántica de conflictos.
+        
+        Detecta conflictos sobre el mismo recurso y aplica políticas determinísticas:
+          - DELETE > CREATE > UPDATE (jerarquía de operaciones)
+          - UPDATEs sobre campos diferentes se fusionan
+          - Last-Write-Wins para UPDATEs del mis mo campo
+        """
+        if not self.is_leader():
+            return
+        
+        # Importar módulo de resolución de conflictos
+        try:
+            from shared.conflict_resolution import ConflictDetector, ConflictResolver, ResolutionAction
+            use_semantic = True
+        except ImportError:
+            logger.warning("Módulo conflict_resolution no disponible - usando reconciliación simple")
+            use_semantic = False
+        
+        try:
+            # Obtener log completo del peer
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                async with session.get(f"{peer}/raft/log/full") as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json()
+                    peer_entries_data = data.get("entries", [])
+        except Exception as e:
+            logger.warning(f"Error obteniendo log completo de {peer}: {e}")
+            return
+
+        if not peer_entries_data:
+            return
+
+        # Convertir a LogEntry objects
+        peer_entries = []
+        for entry_data in peer_entries_data:
+            entry = LogEntry.from_dict(entry_data)
+            peer_entries.append(entry)
+
+        # Detectar entradas que no están en nuestro log
+        existing_keys = {(e.term, e.command) for e in self.log}
+        new_peer_entries = []
+        
+        for peer_entry in peer_entries:
+            key = (peer_entry.term, peer_entry.command)
+            if key not in existing_keys:
+                new_peer_entries.append(peer_entry)
+
+        if not new_peer_entries:
+            return
+
+        # Si no tenemos resolución semántica, usar método simple
+        if not use_semantic:
+            for entry in new_peer_entries:
+                entry.index = len(self.log) + 1
+                self.log.append(entry)
+                self.commit_index = max(self.commit_index, entry.index)
+                self.last_applied = self.commit_index
+                self.save_state()
+                await self.apply_to_state_machine(entry)
+                await self.replicate_log(entry)
+            return
+
+        # Resolución semántica de conflictos
+        detector = ConflictDetector()
+        resolver = ConflictResolver()
+        
+        resolved_entries = []
+        processed_peer_indices = set()
+        
+        for peer_entry in new_peer_entries:
+            conflict_found = False
+            
+            for local_entry in self.log:
+                conflict_type = detector.detect_conflicts(local_entry, peer_entry)
+                
+                if conflict_type.value != "none":
+                    # Hay conflicto - resolver
+                    resolution = resolver.resolve(local_entry, peer_entry)
+                    
+                    logger.info(f"🔧 Conflicto detectado: {conflict_type.value}")
+                    logger.info(f"   Resolución: {resolution.action.value} - {resolution.reason}")
+                    
+                    if resolution.action == ResolutionAction.KEEP_FIRST:
+                        processed_peer_indices.add(id(peer_entry))
+                        conflict_found = True
+                        break
+                    elif resolution.action == ResolutionAction.KEEP_SECOND:
+                        resolved_entries.append(peer_entry)
+                        processed_peer_indices.add(id(peer_entry))
+                        conflict_found = True
+                        break
+                    elif resolution.action == ResolutionAction.MERGE:
+                        resolved_entries.append(resolution.merged)
+                        processed_peer_indices.add(id(peer_entry))
+                        conflict_found = True
+                        break
+                    elif resolution.action == ResolutionAction.KEEP_BOTH:
+                        continue
+            
+            # Si no hubo conflictos, agregar entrada del peer
+            if not conflict_found and id(peer_entry) not in processed_peer_indices:
+                resolved_entries.append(peer_entry)
+
+        # Incorporar entradas resueltas al log
+        if not resolved_entries:
+            return
+
+        logger.info(f"🔄 Reconciliando {len(resolved_entries)} entradas desde {peer "} con resolución semántica")
+        
+        for entry in resolved_entries:
+            entry.index = len(self.log) + 1
+            if not hasattr(entry, 'timestamp') or entry.timestamp is None:
+                entry.timestamp = time.time()
+            if not hasattr(entry, 'originating_node') or entry.originating_node is None:
+                entry.originating_node = peer
+            
+            self.log.append(entry)
+            self.commit_index = max(self.commit_index, entry.index)
+            self.last_applied = self.commit_index
+            self.save_state()
+            await self.apply_to_state_machine(entry)
+            await self.replicate_log(entry)
+
+        logger.info(f"✅ Reconciliación semántica: {len(resolved_entries)} entradas agregadas")
 
     async def _recover_from_peers(self):
         """Cuando nos volvemos líder, buscamos el log más avanzado en los peers y lo adoptamos."""

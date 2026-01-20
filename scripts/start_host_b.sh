@@ -76,7 +76,6 @@ USERS_PORTS=(8810 8811 8812)
 run_node() {
   local name=$1 port=$2 shard=$3 peers=$4 coord_url=$5 coord_urls=$6
   docker run -d --name "$name" --hostname "$name" --network "$NETWORK" -p "${port}:${port}" \
-    -v "${name}_data":/app/data \
     -e PYTHONPATH="/app:/app/backend" \
     -e SHARD_NAME="$shard" \
     -e NODE_ID="$name" \

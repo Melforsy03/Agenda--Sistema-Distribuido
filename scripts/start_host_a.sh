@@ -83,9 +83,8 @@ USERS_PORTS=(8810 8811 8812)
 echo "🌐 Red: $NETWORK | IP local: $SELF_IP | Host B: $HOST_B_IP"
 
 run_node() {
-  local name=$1 port=$2 shard=$3 peers=$4 coord_url=$5 coord_urls=$6 volume=$7
+  local name=$1 port=$2 shard=$3 peers=$4 coord_url=$5 coord_urls=$6
   docker run -d --name "$name" --hostname "$name" --network "$NETWORK" -p "${port}:${port}" \
-    -v "$volume":/app/data \
     -e PYTHONPATH="/app:/app/backend" \
     -e SHARD_NAME="$shard" \
     -e NODE_ID="$name" \
@@ -112,19 +111,19 @@ peers_for() {
 echo "🚀 Lanzando nodos en Host A (nodos 1-2 por shard)..."
 for i in 0 1; do
   peers=$(peers_for EVENTS_AM_NAMES EVENTS_AM_PORTS "$i")
-  run_node "${EVENTS_AM_NAMES[$i]}" "${EVENTS_AM_PORTS[$i]}" EVENTOS_A_M "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_am$((i+1))"
+  run_node "${EVENTS_AM_NAMES[$i]}" "${EVENTS_AM_PORTS[$i]}" EVENTOS_A_M "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}"
 done
 for i in 0 1; do
   peers=$(peers_for EVENTS_NZ_NAMES EVENTS_NZ_PORTS "$i")
-  run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_nz$((i+1))"
+  run_node "${EVENTS_NZ_NAMES[$i]}" "${EVENTS_NZ_PORTS[$i]}" EVENTOS_N_Z "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}"
 done
 for i in 0 1; do
   peers=$(peers_for GROUPS_NAMES GROUPS_PORTS "$i")
-  run_node "${GROUPS_NAMES[$i]}" "${GROUPS_PORTS[$i]}" GRUPOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_groups$((i+1))"
+  run_node "${GROUPS_NAMES[$i]}" "${GROUPS_PORTS[$i]}" GRUPOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}"
 done
 for i in 0 1; do
   peers=$(peers_for USERS_NAMES USERS_PORTS "$i")
-  run_node "${USERS_NAMES[$i]}" "${USERS_PORTS[$i]}" USUARIOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}" "raft_data_users$((i+1))"
+  run_node "${USERS_NAMES[$i]}" "${USERS_PORTS[$i]}" USUARIOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}"
 done
 
 echo "🎯 Lanzando coordinador principal..."

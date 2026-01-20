@@ -772,7 +772,7 @@ class RaftNode:
         if not resolved_entries:
             return
 
-        logger.info(f"🔄 Reconciliando {len(resolved_entries)} entradas desde {peer "} con resolución semántica")
+        logger.info(f"🔄 Reconciliando {len(resolved_entries)} entradas desde {peer} con resolución semántica")
         
         for entry in resolved_entries:
             entry.index = len(self.log) + 1

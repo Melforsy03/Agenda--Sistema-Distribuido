@@ -20,6 +20,10 @@ class APIClient:
         self._last_probe = 0.0
         self._probe_ttl = float(os.getenv("API_COORD_PROBE_TTL", "30") or 30)
         self._probe_interval = float(os.getenv("API_COORD_PROBE_INTERVAL", "5") or 5)
+        self._http_timeout = float(os.getenv("API_HTTP_TIMEOUT", "2.0") or 2.0)
+        # Circuit breaker simple para nodos caídos en particiones
+        self._fail_counts: dict[str, int] = {}
+        self._cooldown_until: dict[str, float] = {}
         self._lock = threading.Lock()
         try:
             self._pick_best_base(force=True)
@@ -44,9 +48,12 @@ class APIClient:
         """Devuelve lista de coordinadores vivos ordenados por latencia."""
         alive = []
         for candidate in self.base_urls:
+            if self._in_cooldown(candidate):
+                continue
             latency = self._ping_base(candidate)
             if latency is None:
                 continue
+            self._reset_fail(candidate)
             alive.append((latency, candidate))
         alive.sort(key=lambda x: x[0])
         return [c for _, c in alive]
@@ -59,8 +66,10 @@ class APIClient:
         candidates = list(self.base_urls)
         updated = False
         for base in candidates:
+            if self._in_cooldown(base):
+                continue
             try:
-                resp = requests.get(f"{base}/coordinators/peers", timeout=2.0)
+                resp = requests.get(f"{base}/coordinators/peers", timeout=self._http_timeout)
                 resp.raise_for_status()
                 data = resp.json()
                 for c in data.get("coordinators", []):
@@ -78,6 +87,29 @@ class APIClient:
                 self._pick_best_base(force=True)
             except Exception:
                 pass
+    
+    def _in_cooldown(self, url: str) -> bool:
+        """Rechaza temporalmente un coordinador si falló recientemente (evita timeouts en particiones)."""
+        now = time.time()
+        until = self._cooldown_until.get(url, 0)
+        return now < until
+
+    def _register_fail(self, url: str):
+        """Incrementa contador y establece cooldown exponencial."""
+        now = time.time()
+        fails = self._fail_counts.get(url, 0) + 1
+        self._fail_counts[url] = fails
+        backoff_base = float(os.getenv("API_HTTP_BACKOFF_BASE", "2.0") or 2.0)
+        backoff_max = float(os.getenv("API_HTTP_BACKOFF_MAX", "30.0") or 30.0)
+        cooldown = min(backoff_max, backoff_base * (2 ** (fails - 1)))
+        self._cooldown_until[url] = now + cooldown
+
+    def _reset_fail(self, url: str):
+        """Limpia estado de fallos al volver a responder."""
+        if url in self._fail_counts:
+            del self._fail_counts[url]
+        if url in self._cooldown_until:
+            del self._cooldown_until[url]
 
     def _pick_best_base(self, force: bool = False) -> Optional[str]:
         """Elige el coordinador con menor latencia entre los que respondan."""
@@ -139,8 +171,9 @@ class APIClient:
                 break
             url = f"{base}{endpoint}"
             try:
-                response = requests.request(method, url, headers=headers, **kwargs)
+                response = requests.request(method, url, headers=headers, timeout=self._http_timeout, **kwargs)
                 response.raise_for_status()
+                self._reset_fail(base)
                 return response.json()
             except requests.exceptions.HTTPError as e:
                 # Extraer mensaje de error del servidor si existe
@@ -162,6 +195,7 @@ class APIClient:
                     raise Exception(f"Error: {error_detail}")
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
                 last_error = e
+                self._register_fail(base)
                 continue
 
         raise Exception(

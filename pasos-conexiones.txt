@@ -17,6 +17,14 @@ FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordin
 WS_PORT=8767 \
 bash scripts/start_host_a.sh
 
+# Ejemplo host A con backoff rápido para particiones:
+HOST_B_IP=10.6.122.161 \
+FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700" \
+API_HTTP_TIMEOUT=1.5 API_HTTP_BACKOFF_BASE=2 API_HTTP_BACKOFF_MAX=15 API_COORD_PROBE_TTL=5 API_COORD_PROBE_INTERVAL=2 \
+WS_PORT=8767 \
+bash scripts/start_host_a.sh
+
+
 //////////////lanzamiento B
 cd "/home/melani/Escritorio/Agenda Disitribuida/Agenda"
 
@@ -24,6 +32,16 @@ COORD_IP=10.6.122.132 \
 FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700" \
 WS_PORT=8767 \
 bash scripts/start_host_b.sh
+
+# Ejemplo host B con backoff rápido (o limita FRONT_API_URLS al coordinador local si prefieres):
+COORD_IP=10.6.122.132 \
+FRONT_API_URLS="http://coordinator_b:8700,http://coordinator:8700,http://coordinator_c:8700" \
+API_HTTP_TIMEOUT=1.5 API_HTTP_BACKOFF_BASE=2 API_HTTP_BACKOFF_MAX=15 API_COORD_PROBE_TTL=5 API_COORD_PROBE_INTERVAL=2 \
+WS_PORT=8767 \
+bash scripts/start_host_b.sh
+
+# Notas de front en partición: en el host B (u otro), puedes limitar FRONT_API_URLS al coordinador local
+# mientras dure la partición, o usar los timeouts/backoff de arriba para que el cliente salte rápido al vivo.
 
 
 ///////agregar shard nodo

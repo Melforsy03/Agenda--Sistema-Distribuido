@@ -240,6 +240,19 @@ async def apply_log_entry(entry):
             (1 if p.get("accepted") else 0, p.get("event_id"), p.get("user_id"))
         )
         conn.commit()
+    elif t == "DELETE_EVENT" and "EVENTOS" in SHARD_NAME:
+        # Borrar evento y participantes (autorización ya se valida en el endpoint)
+        event_id = p.get("event_id")
+        cursor.execute("DELETE FROM event_participants WHERE event_id=?", (event_id,))
+        cursor.execute("DELETE FROM events WHERE id=?", (event_id,))
+        conn.commit()
+    elif t == "LEAVE_EVENT" and "EVENTOS" in SHARD_NAME:
+        # Salida voluntaria de un participante (no creador)
+        cursor.execute(
+            "DELETE FROM event_participants WHERE event_id=? AND user_id=?",
+            (p.get("event_id"), p.get("user_id"))
+        )
+        conn.commit()
     elif t == "UPDATE_GROUP" and "GRUPOS" in SHARD_NAME:
         # Actualizar nombre y/o descripción del grupo
         name = p.get("name")
@@ -794,6 +807,71 @@ elif "EVENTOS" in SHARD_NAME:
         raft.last_applied = max(raft.last_applied, entry.index)
         raft.save_state()
         return {"status": "ok", "message": "Evento actualizado exitosamente"}
+
+    @app.delete("/events/{event_id}")
+    async def delete_event(event_id: int, requester_id: int = None, user_id: int = None):
+        """Cancelar/borrar un evento (solo el creador)."""
+        if not raft.is_leader():
+            return {"error": "No soy el líder", "leader": raft.leader_id}
+
+        requester = requester_id or user_id
+        if requester is None:
+            return {"error": "requester_id requerido"}
+
+        cursor.execute("SELECT creator_id, title FROM events WHERE id=?", (event_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Evento no encontrado"}
+        creator_id = row[0]
+        if int(creator_id) != int(requester):
+            return {"error": "Solo el creador puede cancelar el evento"}
+
+        payload = {"event_id": event_id, "requester_id": requester}
+        cmd = json.dumps({"type": "DELETE_EVENT", "payload": payload})
+        entry = raft.append_log(cmd)
+        replicated = await raft.replicate_log(entry)
+        if not replicated:
+            return {"error": "No se pudo replicar la cancelación"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
+        return {"status": "ok", "message": f"Evento {event_id} eliminado"}
+
+    @app.delete("/events/{event_id}/leave")
+    async def leave_event(event_id: int, requester_id: int = None, user_id: int = None):
+        """Salir de un evento (no creador)."""
+        if not raft.is_leader():
+            return {"error": "No soy el líder", "leader": raft.leader_id}
+
+        requester = requester_id or user_id
+        if requester is None:
+            return {"error": "requester_id requerido"}
+
+        cursor.execute("SELECT creator_id, title FROM events WHERE id=?", (event_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Evento no encontrado"}
+        creator_id = row[0]
+        if int(creator_id) == int(requester):
+            return {"error": "El creador no puede salir; use eliminar evento"}
+
+        cursor.execute(
+            "SELECT 1 FROM event_participants WHERE event_id=? AND user_id=?",
+            (event_id, requester)
+        )
+        if not cursor.fetchone():
+            return {"error": "No eres participante de este evento"}
+
+        payload = {"event_id": event_id, "user_id": requester}
+        cmd = json.dumps({"type": "LEAVE_EVENT", "payload": payload})
+        entry = raft.append_log(cmd)
+        replicated = await raft.replicate_log(entry)
+        if not replicated:
+            return {"error": "No se pudo replicar la salida del evento"}
+        await raft.apply_to_state_machine(entry)
+        raft.last_applied = max(raft.last_applied, entry.index)
+        raft.save_state()
+        return {"status": "ok", "message": "Has salido del evento"}
 
     @app.get("/events/conflicts")
     def event_conflicts(user_id: int, limit: int = 50):

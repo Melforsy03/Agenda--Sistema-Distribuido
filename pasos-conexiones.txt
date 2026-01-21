@@ -20,7 +20,7 @@ bash scripts/start_host_a.sh
 //////////////lanzamiento B
 cd "/home/melani/Escritorio/Agenda Disitribuida/Agenda"
 
-COORD_IP=192.168.148.147 \
+COORD_IP=10.6.122.132 \
 FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700" \
 WS_PORT=8767 \
 bash scripts/start_host_b.sh

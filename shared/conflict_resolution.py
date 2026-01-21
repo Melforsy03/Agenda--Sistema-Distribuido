@@ -102,13 +102,15 @@ class ConflictDetector:
         
         operation_type = data.get("type", "UNKNOWN")
         payload = data.get("payload", {})
+        op_upper = str(operation_type).upper()
         
         # Extraer ID del recurso
-        resource_id = self._get_resource_id(operation_type, payload)
-        resource_type = self._get_resource_type(operation_type)
+        resource_id = self._get_resource_id(op_upper, payload)
+        resource_type = self._get_resource_type(op_upper, payload)
         
         # Extraer campos modificados
-        fields = [k for k in payload.keys() if k not in ["event_id", "group_id", "user_id"]]
+        excluded_keys = {"event_id", "eventId", "group_id", "groupId", "user_id", "userId", "resource_id", "resourceId", "id"}
+        fields = [k for k in payload.keys() if k not in excluded_keys]
         
         return OperationMetadata(
             operation_type=operation_type,
@@ -121,52 +123,72 @@ class ConflictDetector:
             raw_payload=payload
         )
     
-    def _get_resource_id(self, operation_type: str, payload: dict) -> Optional[str]:
+    def _get_resource_id(self, op_upper: str, payload: dict) -> Optional[str]:
         """Extrae el ID del recurso según tipo de operación"""
-        # Mapeo de operaciones a campos de ID
-        if "EVENT" in operation_type:
-            event_id = payload.get("event_id")
+        # Mapeo de operaciones a campos de ID, tolerando claves distintas según origen
+        if "EVENT" in op_upper or "INVITATION" in op_upper:
+            event_id = payload.get("event_id") or payload.get("eventId") or payload.get("id") or payload.get("resource_id")
             return f"event:{event_id}" if event_id is not None else None
-        elif "GROUP" in operation_type:
-            group_id = payload.get("group_id")
+        elif "GROUP" in op_upper:
+            group_id = payload.get("group_id") or payload.get("groupId") or payload.get("id") or payload.get("resource_id")
             return f"group:{group_id}" if group_id is not None else None
-        elif "USER" in operation_type:
-            user_id = payload.get("user_id") or payload.get("username")
+        elif "USER" in op_upper:
+            user_id = payload.get("user_id") or payload.get("userId") or payload.get("username") or payload.get("id")
             return f"user:{user_id}" if user_id is not None else None
+        
+        # Si no se pudo inferir por el tipo, intentar con un id genérico
+        generic_id = payload.get("id") or payload.get("resource_id") or payload.get("resourceId")
+        generic_type = payload.get("resource_type")
+        if generic_id is not None and generic_type:
+            return f"{generic_type}:{generic_id}"
         
         return None
     
-    def _get_resource_type(self, operation_type: str) -> str:
+    def _get_resource_type(self, op_upper: str, payload: dict) -> str:
         """Determina el tipo de recurso desde el tipo de operación"""
-        if "EVENT" in operation_type:
+        if "EVENT" in op_upper or payload.get("event_id") or payload.get("eventId"):
             return "event"
-        elif "GROUP" in operation_type:
+        elif "GROUP" in op_upper or payload.get("group_id") or payload.get("groupId"):
             return "group"
-        elif "USER" in operation_type:
+        elif "USER" in op_upper or payload.get("user_id") or payload.get("userId") or payload.get("username"):
             return "user"
-        return "unknown"
+        return payload.get("resource_type") or "unknown"
     
     def _classify_conflict(self, op1_type: str, op2_type: str) -> ConflictType:
         """Clasifica el tipo de conflicto entre dos operaciones"""
+        op1_kind = self._operation_kind(op1_type)
+        op2_kind = self._operation_kind(op2_type)
+
         # DELETE vs cualquier cosa
-        if "DELETE" in op1_type or "DELETE" in op2_type:
-            if "DELETE" in op1_type and "DELETE" in op2_type:
+        if op1_kind == "delete" or op2_kind == "delete":
+            if op1_kind == "delete" and op2_kind == "delete":
                 return ConflictType.DELETE_DELETE
-            elif "UPDATE" in op1_type or "UPDATE" in op2_type:
+            elif op1_kind == "update" or op2_kind == "update":
                 return ConflictType.DELETE_UPDATE
             # DELETE vs CREATE es imposible (DELETE requiere recurso existente)
             return ConflictType.COMPATIBLE
         
         # CREATE vs CREATE
-        if "CREATE" in op1_type and "CREATE" in op2_type:
+        if op1_kind == "create" and op2_kind == "create":
             return ConflictType.CREATE_CREATE
         
         # UPDATE vs UPDATE
-        if "UPDATE" in op1_type and "UPDATE" in op2_type:
+        if op1_kind == "update" and op2_kind == "update":
             return ConflictType.UPDATE_UPDATE
         
         # Otros casos son compatibles
         return ConflictType.COMPATIBLE
+
+    def _operation_kind(self, op_type: str) -> str:
+        """Normaliza el tipo de operación (create/update/delete)"""
+        upper = (op_type or "").upper()
+        if "DELETE" in upper or "CANCEL" in upper or "REMOVE" in upper:
+            return "delete"
+        if "CREATE" in upper or "ADD" in upper:
+            return "create"
+        if "UPDATE" in upper or "EDIT" in upper or "PATCH" in upper:
+            return "update"
+        return "other"
 
 
 class ConflictResolver:
@@ -301,7 +323,7 @@ class ConflictResolver:
         merged_payload = {**meta1.raw_payload, **meta2.raw_payload}
         
         # Crear entrada fusionada con timestamp más reciente
-merged_entry = LogEntry(
+        merged_entry = LogEntry(
             term=max(op1.term, op2.term),
             command=json.dumps({"type": meta1.operation_type, "payload": merged_payload}),
             timestamp=max(meta1.timestamp, meta2.timestamp),

@@ -325,23 +325,36 @@ async def apply_log_entry(entry):
         # Borrar evento y participantes (autorización ya se valida en el endpoint)
         event_id = p.get("event_id")
         ext_id = p.get("external_id")
+        title = p.get("title")
+        start_time = p.get("start_time")
+        end_time = p.get("end_time")
+        creator_id = p.get("creator_id")
+        group_id = p.get("group_id")
+
+        ids_to_delete = []
         if ext_id:
             cursor.execute("SELECT id FROM events WHERE external_id=?", (ext_id,))
-            row = cursor.fetchone()
-            if row:
-                event_id = row[0]
-            else:
-                # Buscar por datos básicos si aún no conocemos el external_id local
-                cursor.execute("""
-                    SELECT id FROM events
-                    WHERE title=? AND creator_id=? AND start_time=? AND end_time=?
-                """, (p.get("title"), p.get("creator_id"), p.get("start_time"), p.get("end_time")))
-                row = cursor.fetchone()
-                if row:
-                    event_id = row[0]
-                    cursor.execute("UPDATE events SET external_id=? WHERE id=?", (ext_id, event_id))
-        cursor.execute("DELETE FROM event_participants WHERE event_id=?", (event_id,))
-        cursor.execute("DELETE FROM events WHERE id=?", (event_id,))
+            ids_to_delete = [r[0] for r in cursor.fetchall()]
+        # Fallback: buscar por campos básicos para limpiar duplicados antiguos con external_id diferente
+        if not ids_to_delete and title and start_time and end_time and creator_id is not None:
+            cursor.execute("""
+                SELECT id, external_id FROM events
+                WHERE title=? AND creator_id=? AND start_time=? AND end_time=? AND ifnull(group_id,'')=ifnull(?, '')
+            """, (title, creator_id, start_time, end_time, group_id))
+            rows = cursor.fetchall()
+            ids_to_delete = [r[0] for r in rows]
+            # Si encontramos filas sin external_id, asignar el recibido para futuras operaciones
+            if ext_id:
+                for r in rows:
+                    if not r[1]:
+                        cursor.execute("UPDATE events SET external_id=? WHERE id=?", (ext_id, r[0]))
+
+        if not ids_to_delete and event_id:
+            ids_to_delete = [event_id]
+
+        for eid in ids_to_delete:
+            cursor.execute("DELETE FROM event_participants WHERE event_id=?", (eid,))
+            cursor.execute("DELETE FROM events WHERE id=?", (eid,))
         conn.commit()
     elif t == "LEAVE_EVENT" and "EVENTOS" in SHARD_NAME:
         # Salida voluntaria de un participante (no creador)
@@ -977,7 +990,16 @@ elif "EVENTOS" in SHARD_NAME:
             cursor.execute("UPDATE events SET external_id=? WHERE id=?", (ext_id, event_id))
             conn.commit()
 
-        payload = {"event_id": event_id, "requester_id": requester, "external_id": ext_id}
+        payload = {
+            "event_id": event_id,
+            "requester_id": requester,
+            "external_id": ext_id,
+            "title": row[1],
+            "start_time": row[3],
+            "end_time": row[4],
+            "group_id": row[5],
+            "creator_id": creator_id,
+        }
         cmd = json.dumps({"type": "DELETE_EVENT", "payload": payload})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)

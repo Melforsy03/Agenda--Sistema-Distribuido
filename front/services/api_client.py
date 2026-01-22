@@ -2,6 +2,7 @@ import requests
 import os
 import time
 import threading
+import uuid
 from typing import Optional, List
 from urllib.parse import urlparse
 
@@ -243,7 +244,8 @@ class APIClient:
             "name": name,
             "description": description,
             "is_hierarchical": is_hierarchical,
-            "members": members or []
+            "members": members or [],
+            "external_id": uuid.uuid4().hex,
         }
         return self._make_request("POST", "/groups", json=data, params={"token": token})
     
@@ -342,7 +344,8 @@ class APIClient:
             "group_id": group_id,
             "is_group_event": is_group_event,
             "participants_ids": participants_ids or [],
-            "is_hierarchical": is_hierarchical
+            "is_hierarchical": is_hierarchical,
+            "external_id": uuid.uuid4().hex,
         }
         return self._make_request("POST", "/events", json=data, params={"token": token})
 

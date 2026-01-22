@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import json
+import uuid
 from typing import Optional, List
 import websockets
 import threading
@@ -569,6 +570,7 @@ async def create_event(event: EventCreate, token: str):
     shard_name = get_shard_for_user(username)
 
     payload = event.dict()
+    payload.setdefault("external_id", uuid.uuid4().hex)
     payload["creator"] = username
     payload["creator_id"] = user_id
     payload["creator_username"] = username
@@ -636,6 +638,7 @@ async def create_group(group: GroupCreate, token: str):
     username = user_data.get("username")
     user_id = user_data.get("user_id")
     payload = group.dict()
+    payload.setdefault("external_id", uuid.uuid4().hex)
     payload["creator_id"] = user_id
     payload["creator_username"] = username
     try:

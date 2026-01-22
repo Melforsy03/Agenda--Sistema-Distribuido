@@ -34,7 +34,7 @@ WS_PORT=8767 \
 bash scripts/start_host_b.sh
 
 # Ejemplo host B con backoff rápido (o limita FRONT_API_URLS al coordinador local si prefieres):
-COORD_IP=10.6.122.132 \
+COORD_IP=10.188.139.147 \
 FRONT_API_URLS="http://coordinator_b:8700,http://coordinator:8700,http://coordinator_c:8700" \
 API_HTTP_TIMEOUT=1.5 API_HTTP_BACKOFF_BASE=2 API_HTTP_BACKOFF_MAX=15 API_COORD_PROBE_TTL=5 API_COORD_PROBE_INTERVAL=2 \
 WS_PORT=8767 \

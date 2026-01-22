@@ -111,7 +111,8 @@ elif "GRUPOS" in SHARD_NAME:
         is_hierarchical INTEGER DEFAULT 0,
         creator_id INTEGER,
         creator_username TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        external_id TEXT
     );
     """)
     # Migración simple: agregar columna si falta
@@ -119,6 +120,18 @@ elif "GRUPOS" in SHARD_NAME:
     cols = [r[1] for r in cursor.fetchall()]
     if "is_hierarchical" not in cols:
         cursor.execute("ALTER TABLE groups ADD COLUMN is_hierarchical INTEGER DEFAULT 0")
+        conn.commit()
+    if "external_id" not in cols:
+        cursor.execute("ALTER TABLE groups ADD COLUMN external_id TEXT")
+        conn.commit()
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_external_id ON groups(external_id)")
+    # Backfill determinista por nombre+creator para grupos viejos sin external_id
+    cursor.execute("SELECT id, name, creator_id FROM groups WHERE external_id IS NULL OR external_id = ''")
+    missing_g = cursor.fetchall()
+    for row in missing_g:
+        g_hash = hashlib.sha1(json.dumps({"name": row[1], "creator_id": row[2]}, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        cursor.execute("UPDATE groups SET external_id=? WHERE id=?", (g_hash, row[0]))
+    if missing_g:
         conn.commit()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS group_members (
@@ -191,17 +204,34 @@ async def apply_log_entry(entry):
         except Exception:
             pass
     elif t == "CREATE_GROUP" and "GRUPOS" in SHARD_NAME:
-        cursor.execute(
-            "INSERT INTO groups (name, description, is_hierarchical, creator_id, creator_username) VALUES (?, ?, ?, ?, ?)",
-            (
-                p.get("name"),
-                p.get("description"),
-                1 if p.get("is_hierarchical") else 0,
-                p.get("creator_id"),
-                p.get("creator_username"),
+        # External_id determinista (por nombre+creator) para idempotencia
+        g_hash = p.get("external_id")
+        if not g_hash:
+            g_hash = hashlib.sha1(json.dumps({"name": p.get("name"), "creator_id": p.get("creator_id")}, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        cursor.execute("SELECT id FROM groups WHERE external_id=?", (g_hash,))
+        row = cursor.fetchone()
+        if row:
+            gid = row[0]
+        else:
+            cursor.execute(
+                "INSERT OR IGNORE INTO groups (name, description, is_hierarchical, creator_id, creator_username, external_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    p.get("name"),
+                    p.get("description"),
+                    1 if p.get("is_hierarchical") else 0,
+                    p.get("creator_id"),
+                    p.get("creator_username"),
+                    g_hash,
+                )
             )
-        )
-        gid = cursor.lastrowid
+            gid = cursor.lastrowid
+            if not gid:
+                cursor.execute("SELECT id FROM groups WHERE external_id=?", (g_hash,))
+                r2 = cursor.fetchone()
+                gid = r2[0] if r2 else None
+        if not gid:
+            conn.commit()
+            return
         cursor.execute(
             "INSERT OR IGNORE INTO group_members (group_id, user_id, username, is_leader) VALUES (?, ?, ?, 1)",
             (gid, p.get("creator_id"), p.get("creator_username"))
@@ -237,6 +267,7 @@ async def apply_log_entry(entry):
                 )
         conn.commit()
     elif t == "CREATE_EVENT" and "EVENTOS" in SHARD_NAME:
+        # ID externo determinista para que todos los nodos apunten al mismo recurso
         key_payload = {
             "title": p.get("title"),
             "start_time": p.get("start_time"),
@@ -247,15 +278,28 @@ async def apply_log_entry(entry):
         key_str = json.dumps(key_payload, sort_keys=True, default=str)
         deterministic_id = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
         external_id = p.get("external_id") or deterministic_id
-        cursor.execute("""
-            INSERT INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event, is_hierarchical_event, external_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (p.get("title"), p.get("description"), p.get("creator_id"), p.get("creator_username"),
-              p.get("start_time"), p.get("end_time"), p.get("group_id"),
-              1 if p.get("is_group_event") else 0,
-              1 if p.get("is_hierarchical") or p.get("is_hierarchical_event") else 0,
-              external_id))
-        eid = cursor.lastrowid
+        # Intento idempotente: si ya existe ese external_id, usarlo
+        cursor.execute("SELECT id FROM events WHERE external_id=?", (external_id,))
+        row = cursor.fetchone()
+        if row:
+            eid = row[0]
+        else:
+            cursor.execute("""
+                INSERT OR IGNORE INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event, is_hierarchical_event, external_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (p.get("title"), p.get("description"), p.get("creator_id"), p.get("creator_username"),
+                  p.get("start_time"), p.get("end_time"), p.get("group_id"),
+                  1 if p.get("is_group_event") else 0,
+                  1 if p.get("is_hierarchical") or p.get("is_hierarchical_event") else 0,
+                  external_id))
+            eid = cursor.lastrowid
+            if not eid:
+                cursor.execute("SELECT id FROM events WHERE external_id=?", (external_id,))
+                ex_row = cursor.fetchone()
+                eid = ex_row[0] if ex_row else None
+        if not eid:
+            conn.commit()
+            return
         # creador aceptado
         cursor.execute(
             "INSERT OR REPLACE INTO event_participants (event_id, user_id, username, is_accepted) VALUES (?, ?, ?, 1)",
@@ -280,6 +324,22 @@ async def apply_log_entry(entry):
     elif t == "DELETE_EVENT" and "EVENTOS" in SHARD_NAME:
         # Borrar evento y participantes (autorización ya se valida en el endpoint)
         event_id = p.get("event_id")
+        ext_id = p.get("external_id")
+        if ext_id:
+            cursor.execute("SELECT id FROM events WHERE external_id=?", (ext_id,))
+            row = cursor.fetchone()
+            if row:
+                event_id = row[0]
+            else:
+                # Buscar por datos básicos si aún no conocemos el external_id local
+                cursor.execute("""
+                    SELECT id FROM events
+                    WHERE title=? AND creator_id=? AND start_time=? AND end_time=?
+                """, (p.get("title"), p.get("creator_id"), p.get("start_time"), p.get("end_time")))
+                row = cursor.fetchone()
+                if row:
+                    event_id = row[0]
+                    cursor.execute("UPDATE events SET external_id=? WHERE id=?", (ext_id, event_id))
         cursor.execute("DELETE FROM event_participants WHERE event_id=?", (event_id,))
         cursor.execute("DELETE FROM events WHERE id=?", (event_id,))
         conn.commit()
@@ -305,6 +365,12 @@ async def apply_log_entry(entry):
     elif t == "DELETE_GROUP" and "GRUPOS" in SHARD_NAME:
         # Eliminar grupo y sus relaciones
         group_id = p.get("group_id")
+        ext_id = p.get("external_id")
+        if ext_id:
+            cursor.execute("SELECT id FROM groups WHERE external_id=?", (ext_id,))
+            row = cursor.fetchone()
+            if row:
+                group_id = row[0]
         cursor.execute("DELETE FROM group_invitations WHERE group_id=?", (group_id,))
         cursor.execute("DELETE FROM group_members WHERE group_id=?", (group_id,))
         cursor.execute("DELETE FROM groups WHERE id=?", (group_id,))
@@ -505,6 +571,8 @@ elif "GRUPOS" in SHARD_NAME:
     async def create_group(group: dict):
         if not raft.is_leader():
             return {"error": "No soy el líder", "leader": raft.leader_id}
+        group = dict(group)
+        group.setdefault("external_id", hashlib.sha1(json.dumps({"name": group.get("name"), "creator_id": group.get("creator_id")}, sort_keys=True, default=str).encode("utf-8")).hexdigest())
         cmd = json.dumps({"type": "CREATE_GROUP", "payload": group})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)
@@ -642,16 +710,17 @@ elif "GRUPOS" in SHARD_NAME:
             return {"error": "No soy el líder", "leader": raft.leader_id}
 
         # Verificar que el grupo existe y obtener su creador
-        cursor.execute("SELECT creator_id FROM groups WHERE id=?", (group_id,))
+        cursor.execute("SELECT creator_id, external_id FROM groups WHERE id=?", (group_id,))
         row = cursor.fetchone()
         if not row:
             return {"error": "Grupo no encontrado"}
 
         creator_id = row[0]
+        ext_id = row[1]
         if creator_id != user_id:
             return {"error": "Solo el creador del grupo puede eliminarlo"}
 
-        payload = {"group_id": group_id}
+        payload = {"group_id": group_id, "external_id": ext_id}
         cmd = json.dumps({"type": "DELETE_GROUP", "payload": payload})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)

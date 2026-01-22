@@ -127,11 +127,35 @@ class ConflictDetector:
         """Extrae el ID del recurso según tipo de operación"""
         # Mapeo de operaciones a campos de ID, tolerando claves distintas según origen
         if "EVENT" in op_upper or "INVITATION" in op_upper:
+            ext_id = payload.get("external_id")
+            if ext_id:
+                return f"event:{ext_id}"
             event_id = payload.get("event_id") or payload.get("eventId") or payload.get("id") or payload.get("resource_id")
-            return f"event:{event_id}" if event_id is not None else None
+            if event_id is not None:
+                return f"event:{event_id}"
+            # Fallback determinista para CREATE_* sin ID: hash de campos principales
+            key_payload = {
+                "title": payload.get("title"),
+                "start_time": payload.get("start_time"),
+                "end_time": payload.get("end_time"),
+                "creator_id": payload.get("creator_id"),
+                "group_id": payload.get("group_id"),
+            }
+            key_str = json.dumps(key_payload, sort_keys=True, default=str)
+            key_hash = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+            return f"event:{key_hash}"
         elif "GROUP" in op_upper:
+            ext_id = payload.get("external_id")
+            if ext_id:
+                return f"group:{ext_id}"
             group_id = payload.get("group_id") or payload.get("groupId") or payload.get("id") or payload.get("resource_id")
-            return f"group:{group_id}" if group_id is not None else None
+            if group_id is not None:
+                return f"group:{group_id}"
+            # Fallback determinista: nombre del grupo (normalizado)
+            name = payload.get("name") or payload.get("group_name")
+            if name:
+                return f"group_name:{name.strip().lower()}"
+            return None
         elif "USER" in op_upper:
             user_id = payload.get("user_id") or payload.get("userId") or payload.get("username") or payload.get("id")
             return f"user:{user_id}" if user_id is not None else None

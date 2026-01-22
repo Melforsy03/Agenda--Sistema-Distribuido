@@ -44,7 +44,8 @@ if "EVENTOS" in SHARD_NAME:
         group_id INTEGER,
         is_group_event INTEGER DEFAULT 0,
         is_hierarchical_event INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        external_id TEXT
     );
     """)
     # Migración simple para agregar columna si falta
@@ -52,6 +53,17 @@ if "EVENTOS" in SHARD_NAME:
     ecols = [r[1] for r in cursor.fetchall()]
     if "is_hierarchical_event" not in ecols:
         cursor.execute("ALTER TABLE events ADD COLUMN is_hierarchical_event INTEGER DEFAULT 0")
+        conn.commit()
+    if "external_id" not in ecols:
+        cursor.execute("ALTER TABLE events ADD COLUMN external_id TEXT")
+        conn.commit()
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_external_id ON events(external_id)")
+    # Backfill external_id si faltan
+    cursor.execute("SELECT id FROM events WHERE external_id IS NULL OR external_id = ''")
+    missing_ext = cursor.fetchall()
+    for row in missing_ext:
+        cursor.execute("UPDATE events SET external_id=? WHERE id=?", (secrets.token_hex(8), row[0]))
+    if missing_ext:
         conn.commit()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS event_participants (
@@ -211,13 +223,15 @@ async def apply_log_entry(entry):
                 )
         conn.commit()
     elif t == "CREATE_EVENT" and "EVENTOS" in SHARD_NAME:
+        external_id = p.get("external_id") or secrets.token_hex(8)
         cursor.execute("""
-            INSERT INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event, is_hierarchical_event)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event, is_hierarchical_event, external_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (p.get("title"), p.get("description"), p.get("creator_id"), p.get("creator_username"),
               p.get("start_time"), p.get("end_time"), p.get("group_id"),
               1 if p.get("is_group_event") else 0,
-              1 if p.get("is_hierarchical") or p.get("is_hierarchical_event") else 0))
+              1 if p.get("is_hierarchical") or p.get("is_hierarchical_event") else 0,
+              external_id))
         eid = cursor.lastrowid
         # creador aceptado
         cursor.execute(
@@ -657,6 +671,9 @@ elif "EVENTOS" in SHARD_NAME:
     async def create_event(event: dict):
         if not raft.is_leader():
             return {"error": "No soy el líder", "leader": raft.leader_id}
+        # Asegurar identificador externo determinista para reconciliación
+        event = dict(event)
+        event.setdefault("external_id", secrets.token_hex(8))
         cmd = json.dumps({"type": "CREATE_EVENT", "payload": event})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)
@@ -762,7 +779,7 @@ elif "EVENTOS" in SHARD_NAME:
             return {"error": "No soy el líder", "leader": raft.leader_id}
 
         # Verificar que el evento existe y obtener su creador
-        cursor.execute("SELECT creator_id, start_time, end_time FROM events WHERE id=?", (event_id,))
+        cursor.execute("SELECT creator_id, start_time, end_time, external_id FROM events WHERE id=?", (event_id,))
         row = cursor.fetchone()
         if not row:
             return {"error": "Evento no encontrado"}
@@ -770,6 +787,7 @@ elif "EVENTOS" in SHARD_NAME:
         creator_id = row[0]
         old_start = row[1]
         old_end = row[2]
+        external_id = row[3]
 
         requester_id = update.get("requester_id")
         if not requester_id:
@@ -780,7 +798,7 @@ elif "EVENTOS" in SHARD_NAME:
             return {"error": "Solo el creador puede modificar este evento"}
 
         # Preparar payload
-        payload = {"event_id": event_id}
+        payload = {"event_id": event_id, "external_id": external_id}
         time_changed = False
 
         if "title" in update:
@@ -818,7 +836,7 @@ elif "EVENTOS" in SHARD_NAME:
         if requester is None:
             return {"error": "requester_id requerido"}
 
-        cursor.execute("SELECT creator_id, title FROM events WHERE id=?", (event_id,))
+        cursor.execute("SELECT creator_id, title, external_id FROM events WHERE id=?", (event_id,))
         row = cursor.fetchone()
         if not row:
             return {"error": "Evento no encontrado"}
@@ -826,7 +844,7 @@ elif "EVENTOS" in SHARD_NAME:
         if int(creator_id) != int(requester):
             return {"error": "Solo el creador puede cancelar el evento"}
 
-        payload = {"event_id": event_id, "requester_id": requester}
+        payload = {"event_id": event_id, "requester_id": requester, "external_id": row[2]}
         cmd = json.dumps({"type": "DELETE_EVENT", "payload": payload})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)

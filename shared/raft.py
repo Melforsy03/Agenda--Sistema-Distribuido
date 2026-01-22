@@ -327,9 +327,9 @@ class RaftNode:
                 continue
             # Empuja estado a peers vivos y detecta rezagos
             for peer in self.peers:
-                await self._sync_peer_state(peer)
-                # Reconciliación semántica con detección de conflictos
+                # Primero traemos entradas divergentes del peer para no borrarlas al sincronizar
                 await self._reconcile_from_peer_semantic(peer)
+                await self._sync_peer_state(peer)
 
     async def _apply_committed_entries(self):
         """Aplica las entradas comprometidas a la máquina de estado"""

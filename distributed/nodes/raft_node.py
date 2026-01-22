@@ -7,6 +7,7 @@ import json
 import httpx
 import bcrypt
 import secrets
+import hashlib
 from datetime import datetime
 from shared.raft import RaftNode
 
@@ -58,11 +59,24 @@ if "EVENTOS" in SHARD_NAME:
         cursor.execute("ALTER TABLE events ADD COLUMN external_id TEXT")
         conn.commit()
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_external_id ON events(external_id)")
-    # Backfill external_id si faltan
-    cursor.execute("SELECT id FROM events WHERE external_id IS NULL OR external_id = ''")
+    # Backfill external_id si faltan usando hash determinista (evita IDs distintos en cada nodo)
+    cursor.execute("""
+        SELECT id, title, start_time, end_time, creator_id, group_id
+        FROM events
+        WHERE external_id IS NULL OR external_id = ''
+    """)
     missing_ext = cursor.fetchall()
     for row in missing_ext:
-        cursor.execute("UPDATE events SET external_id=? WHERE id=?", (secrets.token_hex(8), row[0]))
+        key_payload = {
+            "title": row[1],
+            "start_time": row[2],
+            "end_time": row[3],
+            "creator_id": row[4],
+            "group_id": row[5],
+        }
+        key_str = json.dumps(key_payload, sort_keys=True, default=str)
+        key_hash = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+        cursor.execute("UPDATE events SET external_id=? WHERE id=?", (key_hash, row[0]))
     if missing_ext:
         conn.commit()
     cursor.execute("""
@@ -223,7 +237,16 @@ async def apply_log_entry(entry):
                 )
         conn.commit()
     elif t == "CREATE_EVENT" and "EVENTOS" in SHARD_NAME:
-        external_id = p.get("external_id") or secrets.token_hex(8)
+        key_payload = {
+            "title": p.get("title"),
+            "start_time": p.get("start_time"),
+            "end_time": p.get("end_time"),
+            "creator_id": p.get("creator_id"),
+            "group_id": p.get("group_id"),
+        }
+        key_str = json.dumps(key_payload, sort_keys=True, default=str)
+        deterministic_id = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+        external_id = p.get("external_id") or deterministic_id
         cursor.execute("""
             INSERT INTO events (title, description, creator_id, creator_username, start_time, end_time, group_id, is_group_event, is_hierarchical_event, external_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -673,7 +696,16 @@ elif "EVENTOS" in SHARD_NAME:
             return {"error": "No soy el líder", "leader": raft.leader_id}
         # Asegurar identificador externo determinista para reconciliación
         event = dict(event)
-        event.setdefault("external_id", secrets.token_hex(8))
+        key_payload = {
+            "title": event.get("title"),
+            "start_time": event.get("start_time"),
+            "end_time": event.get("end_time"),
+            "creator_id": event.get("creator_id"),
+            "group_id": event.get("group_id"),
+        }
+        key_str = json.dumps(key_payload, sort_keys=True, default=str)
+        deterministic_id = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+        event.setdefault("external_id", deterministic_id)
         cmd = json.dumps({"type": "CREATE_EVENT", "payload": event})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)
@@ -779,15 +811,33 @@ elif "EVENTOS" in SHARD_NAME:
             return {"error": "No soy el líder", "leader": raft.leader_id}
 
         # Verificar que el evento existe y obtener su creador
-        cursor.execute("SELECT creator_id, start_time, end_time, external_id FROM events WHERE id=?", (event_id,))
+        cursor.execute("""
+            SELECT creator_id, title, start_time, end_time, group_id, external_id
+            FROM events WHERE id=?
+        """, (event_id,))
         row = cursor.fetchone()
         if not row:
             return {"error": "Evento no encontrado"}
 
         creator_id = row[0]
-        old_start = row[1]
-        old_end = row[2]
-        external_id = row[3]
+        old_title = row[1]
+        old_start = row[2]
+        old_end = row[3]
+        group_id = row[4]
+        external_id = row[5]
+        # Si falta external_id (dato viejo), recalcular determinista para que coincida entre nodos
+        if not external_id:
+            key_payload = {
+                "title": old_title,
+                "start_time": old_start,
+                "end_time": old_end,
+                "creator_id": creator_id,
+                "group_id": group_id,
+            }
+            key_str = json.dumps(key_payload, sort_keys=True, default=str)
+            external_id = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+            cursor.execute("UPDATE events SET external_id=? WHERE id=?", (external_id, event_id))
+            conn.commit()
 
         requester_id = update.get("requester_id")
         if not requester_id:
@@ -836,7 +886,7 @@ elif "EVENTOS" in SHARD_NAME:
         if requester is None:
             return {"error": "requester_id requerido"}
 
-        cursor.execute("SELECT creator_id, title, external_id FROM events WHERE id=?", (event_id,))
+        cursor.execute("SELECT creator_id, title, external_id, start_time, end_time, group_id FROM events WHERE id=?", (event_id,))
         row = cursor.fetchone()
         if not row:
             return {"error": "Evento no encontrado"}
@@ -844,7 +894,21 @@ elif "EVENTOS" in SHARD_NAME:
         if int(creator_id) != int(requester):
             return {"error": "Solo el creador puede cancelar el evento"}
 
-        payload = {"event_id": event_id, "requester_id": requester, "external_id": row[2]}
+        ext_id = row[2]
+        if not ext_id:
+            key_payload = {
+                "title": row[1],
+                "start_time": row[3],
+                "end_time": row[4],
+                "creator_id": creator_id,
+                "group_id": row[5],
+            }
+            key_str = json.dumps(key_payload, sort_keys=True, default=str)
+            ext_id = hashlib.sha1(key_str.encode("utf-8")).hexdigest()
+            cursor.execute("UPDATE events SET external_id=? WHERE id=?", (ext_id, event_id))
+            conn.commit()
+
+        payload = {"event_id": event_id, "requester_id": requester, "external_id": ext_id}
         cmd = json.dumps({"type": "DELETE_EVENT", "payload": payload})
         entry = raft.append_log(cmd)
         replicated = await raft.replicate_log(entry)

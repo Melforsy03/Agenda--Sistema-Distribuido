@@ -1,6 +1,18 @@
 # Traefik Dynamic Configuration
 # Routing rules for Agenda Distribuida
 
+# TLS Configuration - MUST be in dynamic config for file provider
+tls:
+  certificates:
+    - certFile: /certs/server.crt
+      keyFile: /certs/server.key
+  
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/server.crt
+        keyFile: /certs/server.key
+
 http:
   routers:
     # API Coordinator - Mayor prioridad
@@ -26,19 +38,11 @@ http:
       loadBalancer:
         servers:
           - url: "http://frontend_a:8501"
-        healthCheck:
-          path: "/_stcore/health"
-          interval: "10s"
-          timeout: "3s"
     
     coordinator:
       loadBalancer:
         servers:
           - url: "http://coordinator:8700"
-        healthCheck:
-          path: "/health"
-          interval: "10s"
-          timeout: "3s"
 
 # WebSocket routing (TCP mode for proper WS handling)
 tcp:
@@ -48,8 +52,7 @@ tcp:
       entryPoints:
         - wss
       service: websocket
-      tls:
-        passthrough: false
+      tls: {}
 
   services:
     websocket:

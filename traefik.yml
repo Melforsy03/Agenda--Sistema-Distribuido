@@ -6,7 +6,7 @@ api:
   insecure: true  # Dashboard en puerto 8080 (solo desarrollo)
 
 log:
-  level: INFO
+  level: DEBUG
 
 entryPoints:
   # HTTPS para API y Frontend
@@ -27,19 +27,3 @@ providers:
   file:
     filename: /etc/traefik/dynamic.yml
     watch: true
-
-# TLS Configuration
-tls:
-  stores:
-    default:
-      defaultCertificate:
-        certFile: /certs/server.crt
-        keyFile: /certs/server.key
-  
-  options:
-    default:
-      minVersion: VersionTLS12
-      cipherSuites:
-        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

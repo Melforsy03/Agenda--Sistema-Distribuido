@@ -791,60 +791,135 @@ class RaftNode:
         logger.info(f"✅ Reconciliación semántica: {len(resolved_entries)} entradas agregadas")
 
     async def _recover_from_peers(self):
-        """Cuando nos volvemos líder, buscamos el log más avanzado en los peers y lo adoptamos."""
+        """Cuando nos volvemos líder, buscamos el log más avanzado en los peers y lo adoptamos.
+        
+        CRÍTICO: Este método se ejecuta cuando un nodo se convierte en líder, especialmente
+        importante cuando un nodo con datos antiguos (mayor prioridad) se reconecta y toma
+        el liderazgo. Debe recuperar TODOS los cambios que ocurrieron mientras estuvo caído.
+        """
+        logger.info(f"🔄 {self.node_id} iniciando recuperación de datos de peers (log actual: {len(self.log)} entradas)")
+        
         best_log = None
+        best_peer = None
         best_summary = {
             "last_index": len(self.log),
             "last_term": self.log[-1].term if self.log else 0,
             "commit_index": self.commit_index,
         }
-        for peer in self.peers:
-            try:
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                    async with session.get(f"{peer}/raft/log/summary") as resp:
-                        if resp.status != 200:
-                            continue
-                        summary = await resp.json()
-                        peer_last = summary.get("last_index", 0)
-                        peer_term = summary.get("last_term", 0)
-                        peer_commit = summary.get("commit_index", 0)
-                        # Escogemos el log más avanzado (mayor índice, o mayor término a mismo índice)
-                        better = False
-                        if peer_last > best_summary["last_index"]:
-                            better = True
-                        elif peer_last == best_summary["last_index"] and peer_term > best_summary["last_term"]:
-                            better = True
-                        if not better:
-                            continue
-                        async with session.get(f"{peer}/raft/sync?follower={self.node_id}") as sync_resp:
+        
+        # Intentar con TODOS los peers, con reintentos
+        for attempt in range(2):  # 2 intentos para asegurar recuperación
+            for peer in self.peers:
+                try:
+                    logger.debug(f"📡 Consultando peer {peer} (intento {attempt + 1}/2)")
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                        # Paso 1: Obtener resumen del log del peer
+                        async with session.get(f"{peer}/raft/log/summary") as resp:
+                            if resp.status != 200:
+                                logger.warning(f"⚠️ Peer {peer} no respondió summary (status {resp.status})")
+                                continue
+                            summary = await resp.json()
+                            peer_last = summary.get("last_index", 0)
+                            peer_term = summary.get("last_term", 0)
+                            peer_commit = summary.get("commit_index", 0)
+                            
+                            logger.info(f"📊 Peer {peer}: {peer_last} entradas, term {peer_term}, commit {peer_commit}")
+                            
+                            # Escogemos el log más avanzado
+                            better = False
+                            if peer_last > best_summary["last_index"]:
+                                better = True
+                                logger.info(f"✨ Peer {peer} tiene más entradas ({peer_last} > {best_summary['last_index']})")
+                            elif peer_last == best_summary["last_index"] and peer_term > best_summary["last_term"]:
+                                better = True
+                                logger.info(f"✨ Peer {peer} tiene mayor term ({peer_term} > {best_summary['last_term']})")
+                            
+                            if not better:
+                                logger.debug(f"➖ Peer {peer} no tiene mejor log, saltando")
+                                continue
+                        
+                        # Paso 2: Obtener el log completo del peer más avanzado
+                        logger.info(f"📥 Descargando log completo de {peer}...")
+                        async with session.get(f"{peer}/raft/log/full") as sync_resp:
                             if sync_resp.status != 200:
+                                logger.warning(f"⚠️ Peer {peer} no respondió log/full (status {sync_resp.status})")
                                 continue
                             data = await sync_resp.json()
-                            entries = data.get("missing_entries", [])
+                            entries = data.get("entries", [])
+                            
+                            if not entries:
+                                logger.warning(f"⚠️ Peer {peer} devolvió log vacío")
+                                continue
+                            
+                            # IMPORTANTE: NO re-indexar, mantener índices originales
                             candidate_log = []
-                            for i, entry_data in enumerate(entries):
+                            for entry_data in entries:
                                 entry = LogEntry.from_dict(entry_data)
-                                entry.index = i + 1
+                                # Mantener el índice original del peer
+                                if entry.index is None:
+                                    logger.warning(f"⚠️ Entrada sin índice en peer {peer}, asignando secuencial")
+                                    entry.index = len(candidate_log) + 1
                                 candidate_log.append(entry)
+                            
                             if candidate_log:
+                                logger.info(f"✅ Log candidato de {peer}: {len(candidate_log)} entradas (índices {candidate_log[0].index}-{candidate_log[-1].index})")
                                 best_log = candidate_log
+                                best_peer = peer
                                 best_summary = {
                                     "last_index": peer_last,
                                     "last_term": peer_term,
                                     "commit_index": min(peer_commit, len(candidate_log)),
                                 }
+                        
                         self.peer_health[peer] = time.time()
-            except Exception as e:
-                logger.warning(f"Error recuperando log de {peer}: {e}")
-                self.peer_health[peer] = 0.0
+                        
+                except asyncio.TimeoutError:
+                    logger.warning(f"⏱️ Timeout recuperando log de {peer}")
+                    self.peer_health[peer] = 0.0
+                except Exception as e:
+                    logger.error(f"❌ Error recuperando log de {peer}: {e}", exc_info=True)
+                    self.peer_health[peer] = 0.0
+            
+            # Si encontramos un mejor log, no necesitamos más intentos
+            if best_log and len(best_log) > len(self.log):
+                break
+            
+            if attempt == 0 and not best_log:
+                logger.warning(f"⚠️ Primer intento falló, esperando 2s antes de reintentar...")
+                await asyncio.sleep(2)
 
-        if best_log:
+        # Aplicar el mejor log encontrado
+        if best_log and len(best_log) > len(self.log):
+            logger.info(f"🎯 ADOPTANDO log de {best_peer}: {len(best_log)} entradas (actual: {len(self.log)})")
+            logger.info(f"   Commit index: {best_summary['commit_index']}, Term: {best_summary['last_term']}")
+            
             async with self._lock:
+                old_log_size = len(self.log)
+                old_commit = self.commit_index
+                old_applied = self.last_applied
+                
+                # Adoptar el nuevo log completo
                 self.log = best_log
                 self.commit_index = best_summary.get("commit_index", len(best_log))
-                self.last_applied = min(self.commit_index, len(self.log))
+                self.last_applied = 0  # IMPORTANTE: Resetear para aplicar TODAS las entradas
                 self.save_state()
-            await self._drain_committed_entries()
+                
+                logger.info(f"📝 Estado actualizado: log {old_log_size}→{len(self.log)}, commit {old_commit}→{self.commit_index}, applied {old_applied}→{self.last_applied}")
+            
+            # CRÍTICO: Aplicar TODAS las entradas al estado (base de datos)
+            logger.info(f"💾 Aplicando {self.commit_index} entradas a la base de datos...")
+            entries_applied = 0
+            try:
+                await self._drain_committed_entries()
+                entries_applied = self.last_applied
+                logger.info(f"✅ Recuperación completada: {entries_applied} entradas aplicadas a SQLite")
+            except Exception as e:
+                logger.error(f"❌ Error aplicando entradas recuperadas: {e}", exc_info=True)
+        elif best_log:
+            logger.info(f"ℹ️ No se encontró log mejor que el actual ({len(self.log)} entradas)")
+        else:
+            logger.warning(f"⚠️ No se pudo recuperar log de ningún peer - continuando con log actual ({len(self.log)} entradas)")
+            logger.warning(f"⚠️ ADVERTENCIA: Si este nodo tiene datos antiguos, puede haber pérdida de datos!")
 
     # ====================================================
     # Handlers para requests RAFT
@@ -1014,10 +1089,22 @@ class RaftNode:
     async def _drain_committed_entries(self):
         """Aplica todas las entradas pendientes hasta commit_index."""
         async with self._lock:
+            entries_to_apply = self.commit_index - self.last_applied
+            if entries_to_apply > 0:
+                logger.debug(f"💧 _drain_committed_entries: aplicando {entries_to_apply} entradas (last_applied={self.last_applied}, commit_index={self.commit_index})")
+            
             while self.last_applied < self.commit_index and self.last_applied < len(self.log):
                 entry = self.log[self.last_applied]
-                await self.apply_to_state_machine(entry)
-                self.last_applied += 1
+                try:
+                    await self.apply_to_state_machine(entry)
+                    self.last_applied += 1
+                except Exception as e:
+                    logger.error(f"❌ Error aplicando entrada {self.last_applied}: {e}", exc_info=True)
+                    # Continuar con la siguiente entrada en lugar de abortar
+                    self.last_applied += 1
+            
+            if entries_to_apply > 0:
+                logger.debug(f"✅ _drain_committed_entries completado: {entries_to_apply} entradas aplicadas")
             self.save_state()
 
     async def apply_to_state_machine(self, entry: LogEntry):
@@ -1025,7 +1112,10 @@ class RaftNode:
         if self.state_machine_callback:
             try:
                 await self.state_machine_callback(entry)
+                logger.debug(f"📥 [{self.node_id}] Aplicada entrada {entry.index}: {entry.command[:100] if entry.command else 'N/A'}...")
             except Exception as e:
-                logger.error(f"Error aplicando entrada en estado: {e}")
+                logger.error(f"❌ Error aplicando entrada {entry.index} en estado: {e}", exc_info=True)
+                raise  # Re-lanzar para que _drain_committed_entries lo maneje
         else:
             logger.info(f"📥 [{self.node_id}] Aplicando: {entry.command} (índice {entry.index})")
+

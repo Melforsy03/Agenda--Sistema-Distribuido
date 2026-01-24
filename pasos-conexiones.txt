@@ -12,13 +12,13 @@ docker volume create agenda_data  # para backend DB
 ////lanzamiento A (usar nombres de contenedor en la red overlay + WS unificado 8767)
 cd "/home/melani/Escritorio/Agenda Disitribuida/Agenda"
 
-HOST_B_IP=10.6.122.161 \
+HOST_B_IP=192.168.1.106 \
 FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700" \
 WS_PORT=8767 \
 bash scripts/start_host_a.sh
 
 # Ejemplo host A con backoff rápido para particiones:
-HOST_B_IP=10.6.122.161 \
+HOST_B_IP=192.168.1.106 \
 FRONT_API_URLS="http://coordinator:8700,http://coordinator_b:8700,http://coordinator_c:8700" \
 API_HTTP_TIMEOUT=1.5 API_HTTP_BACKOFF_BASE=2 API_HTTP_BACKOFF_MAX=15 API_COORD_PROBE_TTL=5 API_COORD_PROBE_INTERVAL=2 \
 WS_PORT=8767 \

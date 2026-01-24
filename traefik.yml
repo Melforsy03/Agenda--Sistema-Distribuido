@@ -1,0 +1,45 @@
+# Traefik Static Configuration
+# For Agenda Distribuida TLS Security
+
+api:
+  dashboard: true
+  insecure: true  # Dashboard en puerto 8080 (solo desarrollo)
+
+log:
+  level: INFO
+
+entryPoints:
+  # HTTPS para API y Frontend
+  websecure:
+    address: ":443"
+  
+  # WSS para WebSockets seguros
+  wss:
+    address: ":8443"
+
+providers:
+  # Docker provider para auto-discovery
+  docker:
+    exposedByDefault: false
+    network: agenda_net
+  
+  # File provider para configuración dinámica
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# TLS Configuration
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/server.crt
+        keyFile: /certs/server.key
+  
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

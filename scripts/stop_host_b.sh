@@ -5,7 +5,7 @@ set -euo pipefail
 
 pkill -f watch_coordinators.sh 2>/dev/null || true
 
-docker rm -f coordinator_b frontend_b \
+docker rm -f traefik_b coordinator_b frontend_b \
   raft_events_am_3 \
   raft_events_nz_3 \
   raft_groups_2 raft_groups_3 \

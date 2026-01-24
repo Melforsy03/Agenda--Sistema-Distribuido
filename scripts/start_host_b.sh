@@ -112,6 +112,76 @@ run_node "${GROUPS_NAMES[2]}" "${GROUPS_PORTS[2]}" GRUPOS "$peers" "$COORD_B_URL
 peers=$(peers_for USERS_NAMES USERS_PORTS 2)
 run_node "${USERS_NAMES[2]}" "${USERS_PORTS[2]}" USUARIOS "$peers" "$COORD_B_URL" "${COORD_B_URL},${COORD_A_URL}"
 
+# ============================================================
+# TRAEFIK (TLS Proxy)
+# ============================================================
+HTTPS_PORT=${HTTPS_PORT:-443}
+WSS_PORT_TLS=${WSS_PORT_TLS:-8443}
+TRAEFIK_DASHBOARD_PORT=${TRAEFIK_DASHBOARD_PORT:-8080}
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "🔒 Lanzando Traefik (TLS Proxy) en Host B..."
+docker rm -f traefik_b 2>/dev/null || true
+
+# Verificar que existen los certificados
+if [[ ! -f "$PROJECT_DIR/certs/server.crt" ]] || [[ ! -f "$PROJECT_DIR/certs/server.key" ]]; then
+  echo "⚠️ No se encontraron certificados TLS. Generando..."
+  "$PROJECT_DIR/scripts/generate_certs.sh"
+fi
+
+# Crear configuración dinámica para Host B (apunta a coordinator_b y frontend_b)
+cat > "$PROJECT_DIR/traefik-dynamic-b.yml" << 'EOF'
+http:
+  routers:
+    coordinator-api:
+      rule: "PathPrefix(`/auth`) || PathPrefix(`/events`) || PathPrefix(`/groups`) || PathPrefix(`/users`) || PathPrefix(`/leaders`) || PathPrefix(`/health`) || PathPrefix(`/coordinators`) || PathPrefix(`/admin`)"
+      entryPoints:
+        - websecure
+      service: coordinator
+      tls: {}
+      priority: 100
+    frontend:
+      rule: "PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      service: frontend
+      tls: {}
+      priority: 1
+  services:
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend_b:8501"
+    coordinator:
+      loadBalancer:
+        servers:
+          - url: "http://coordinator_b:8700"
+tcp:
+  routers:
+    websocket-secure:
+      rule: "HostSNI(`*`)"
+      entryPoints:
+        - wss
+      service: websocket
+      tls:
+        passthrough: false
+  services:
+    websocket:
+      loadBalancer:
+        servers:
+          - address: "coordinator_b:8767"
+EOF
+
+docker run -d --name traefik_b --network "$NETWORK" \
+  -p ${HTTPS_PORT}:443 \
+  -p ${WSS_PORT_TLS}:8443 \
+  -p ${TRAEFIK_DASHBOARD_PORT}:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v "$PROJECT_DIR/certs:/certs:ro" \
+  -v "$PROJECT_DIR/traefik.yml:/etc/traefik/traefik.yml:ro" \
+  -v "$PROJECT_DIR/traefik-dynamic-b.yml:/etc/traefik/dynamic.yml:ro" \
+  traefik:v2.10
+
 echo "🎯 Lanzando coordinador B..."
 docker rm -f coordinator_b 2>/dev/null || true
 docker run -d --name coordinator_b --network "$NETWORK" \
@@ -138,6 +208,14 @@ docker run -d --name frontend_b --hostname frontend_b --network "$NETWORK" \
   -e API_BASE_URLS=${API_BASE_URLS_CONTAINER} \
   -e WEBSOCKET_HOST=${WS_HOST:-coordinator_b} \
   -e WEBSOCKET_PORT=${WEBSOCKET_PORT_CONTAINER} \
+  -e USE_HTTPS=false \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
-echo "✅ Host B listo. Front: http://${SELF_IP}:${FRONT_PORT}"
+echo ""
+echo "✅ Host B listo con TLS habilitado:"
+echo "   🔒 HTTPS Frontend: https://${SELF_IP}:${HTTPS_PORT}"
+echo "   🔒 HTTPS API:      https://${SELF_IP}:${HTTPS_PORT}/health"
+echo "   🔒 WSS WebSocket:  wss://${SELF_IP}:${WSS_PORT_TLS}"
+echo "   📊 Traefik Dashboard: http://${SELF_IP}:${TRAEFIK_DASHBOARD_PORT}"
+echo "   📌 HTTP Legacy:    http://${SELF_IP}:${FRONT_PORT} (sin TLS)"
+

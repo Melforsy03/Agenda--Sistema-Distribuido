@@ -126,6 +126,33 @@ for i in 0 1; do
   run_node "${USERS_NAMES[$i]}" "${USERS_PORTS[$i]}" USUARIOS "$peers" "http://coordinator:8700" "http://coordinator:8700,${COORD_B_URL}"
 done
 
+# ============================================================
+# TRAEFIK (TLS Proxy)
+# ============================================================
+HTTPS_PORT=${HTTPS_PORT:-443}
+WSS_PORT=${WSS_PORT:-8443}
+TRAEFIK_DASHBOARD_PORT=${TRAEFIK_DASHBOARD_PORT:-8080}
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "🔒 Lanzando Traefik (TLS Proxy)..."
+docker rm -f traefik 2>/dev/null || true
+
+# Verificar que existen los certificados
+if [[ ! -f "$PROJECT_DIR/certs/server.crt" ]] || [[ ! -f "$PROJECT_DIR/certs/server.key" ]]; then
+  echo "⚠️ No se encontraron certificados TLS. Generando..."
+  "$PROJECT_DIR/scripts/generate_certs.sh"
+fi
+
+docker run -d --name traefik --network "$NETWORK" \
+  -p ${HTTPS_PORT}:443 \
+  -p ${WSS_PORT}:8443 \
+  -p ${TRAEFIK_DASHBOARD_PORT}:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v "$PROJECT_DIR/certs:/certs:ro" \
+  -v "$PROJECT_DIR/traefik.yml:/etc/traefik/traefik.yml:ro" \
+  -v "$PROJECT_DIR/traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro" \
+  traefik:v2.10
+
 echo "🎯 Lanzando coordinador principal..."
 docker rm -f coordinator 2>/dev/null || true
 docker run -d --name coordinator --network "$NETWORK" \
@@ -151,6 +178,14 @@ docker run -d --name frontend_a --hostname frontend_a --network "$NETWORK" \
   -e API_BASE_URLS=${API_BASE_URLS_CONTAINER} \
   -e WEBSOCKET_HOST=${WS_HOST:-coordinator} \
   -e WEBSOCKET_PORT=${WEBSOCKET_PORT_CONTAINER} \
+  -e USE_HTTPS=false \
   agenda_frontend streamlit run front/app.py --server.port=8501 --server.address=0.0.0.0
 
-echo "✅ Host A listo. Front: http://${SELF_IP}:${FRONT_PORT}"
+echo ""
+echo "✅ Host A listo con TLS habilitado:"
+echo "   🔒 HTTPS Frontend: https://${SELF_IP}:${HTTPS_PORT}"
+echo "   🔒 HTTPS API:      https://${SELF_IP}:${HTTPS_PORT}/health"
+echo "   🔒 WSS WebSocket:  wss://${SELF_IP}:${WSS_PORT}"
+echo "   📊 Traefik Dashboard: http://${SELF_IP}:${TRAEFIK_DASHBOARD_PORT}"
+echo "   📌 HTTP Legacy:    http://${SELF_IP}:${FRONT_PORT} (sin TLS)"
+

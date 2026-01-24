@@ -1,0 +1,58 @@
+# Traefik Dynamic Configuration
+# Routing rules for Agenda Distribuida
+
+http:
+  routers:
+    # API Coordinator - Mayor prioridad
+    coordinator-api:
+      rule: "PathPrefix(`/auth`) || PathPrefix(`/events`) || PathPrefix(`/groups`) || PathPrefix(`/users`) || PathPrefix(`/leaders`) || PathPrefix(`/health`) || PathPrefix(`/coordinators`) || PathPrefix(`/admin`)"
+      entryPoints:
+        - websecure
+      service: coordinator
+      tls: {}
+      priority: 100
+    
+    # Frontend Streamlit - Menor prioridad (catch-all)
+    frontend:
+      rule: "PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      service: frontend
+      tls: {}
+      priority: 1
+
+  services:
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend_a:8501"
+        healthCheck:
+          path: "/_stcore/health"
+          interval: "10s"
+          timeout: "3s"
+    
+    coordinator:
+      loadBalancer:
+        servers:
+          - url: "http://coordinator:8700"
+        healthCheck:
+          path: "/health"
+          interval: "10s"
+          timeout: "3s"
+
+# WebSocket routing (TCP mode for proper WS handling)
+tcp:
+  routers:
+    websocket-secure:
+      rule: "HostSNI(`*`)"
+      entryPoints:
+        - wss
+      service: websocket
+      tls:
+        passthrough: false
+
+  services:
+    websocket:
+      loadBalancer:
+        servers:
+          - address: "coordinator:8767"
